@@ -31,6 +31,7 @@ export interface UploadQueueItem {
   progress: number;
   error?: string;
   uploadedImage?: GalleryImage;
+  resultImage?: GalleryImage;
 }
 
 export interface TelegramStatus {
