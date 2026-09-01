@@ -29,13 +29,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Install Project Dependencies
         run: npm install
 
       - name: Build Vite Production Assets
-        run: npm run build:client
+        run: npx vite build
 
       - name: Setup Pages Configuration
         uses: actions/configure-pages@v5
@@ -48,4 +47,5 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
 
