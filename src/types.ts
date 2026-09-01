@@ -47,6 +47,8 @@ export interface TelegramStatus {
     title?: string;
     type: string;
   };
+  channelUrl?: string;
+  configuredChatId?: string;
   error?: string;
 }
 

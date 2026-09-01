@@ -15,6 +15,7 @@ import {
   Info
 } from 'lucide-react';
 import { GalleryImage, ViewMode, SortOption } from '../types';
+import { resolveImageUrl } from '../services/telegramService';
 
 interface GalleryViewProps {
   images: GalleryImage[];
@@ -444,7 +445,7 @@ const ImageCard: React.FC<CardProps> = ({
 
       {/* Main Image */}
       <img
-        src={image.directUrl}
+        src={resolveImageUrl(image)}
         alt={image.title}
         loading="lazy"
         referrerPolicy="no-referrer"
@@ -573,7 +574,7 @@ const CompactImageRow: React.FC<CardProps> = ({
         )}
 
         <img
-          src={image.directUrl}
+          src={resolveImageUrl(image)}
           alt={image.title}
           className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl object-cover border border-neutral-800 shrink-0"
           loading="lazy"

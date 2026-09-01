@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { GalleryImage } from '../types';
 import { updateImageDetails } from '../services/firebase';
+import { resolveImageUrl } from '../services/telegramService';
 
 interface LightboxModalProps {
   images: GalleryImage[];
@@ -202,8 +203,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
   const handleDownload = () => {
     const a = document.createElement('a');
-    a.href = currentImage.directUrl;
+    a.href = resolveImageUrl(currentImage);
     a.download = `${currentImage.title.replace(/\s+/g, '_') || 'photo'}.jpg`;
+    a.target = '_blank';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -354,7 +356,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         {/* Displayed Image */}
         <div className="relative max-w-full max-h-full flex items-center justify-center overflow-hidden">
           <img
-            src={currentImage.directUrl}
+            src={resolveImageUrl(currentImage)}
             alt={currentImage.title}
             referrerPolicy="no-referrer"
             style={{

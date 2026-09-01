@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { UploadQueueItem, GalleryImage } from '../types';
 import { saveGalleryImage } from '../services/firebase';
+import { uploadImageToTelegram } from '../services/telegramService';
 
 interface BulkUploadStudioProps {
   existingAlbums: string[];
@@ -138,15 +139,8 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
     );
   };
 
-  // Upload single item to backend -> Telegram -> Firestore
+  // Upload single item to Telegram -> Firestore
   const uploadSingleItem = async (item: UploadQueueItem): Promise<GalleryImage> => {
-    const formData = new FormData();
-    formData.append('image', item.file);
-    formData.append('title', item.title);
-    formData.append('caption', item.caption);
-    formData.append('album', item.album);
-    formData.append('tags', JSON.stringify(item.tags));
-
     // Update item to uploading state
     setQueue((prev) =>
       prev.map((q) =>
@@ -154,22 +148,12 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
       )
     );
 
-    const res = await fetch('/api/upload-single', {
-      method: 'POST',
-      body: formData,
+    const imageDoc = await uploadImageToTelegram(item.file, {
+      title: item.title,
+      caption: item.caption,
+      album: item.album,
+      tags: item.tags,
     });
-
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || `Upload failed with HTTP ${res.status}`);
-    }
-
-    const data = await res.json();
-    if (!data.ok || !data.image) {
-      throw new Error(data.error || 'Invalid response from Telegram upload server');
-    }
-
-    const imageDoc: GalleryImage = data.image;
 
     // Save record to Firestore for permanent persistence
     await saveGalleryImage(imageDoc);

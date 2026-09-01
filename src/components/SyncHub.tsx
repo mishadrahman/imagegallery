@@ -15,6 +15,7 @@ import {
   Check
 } from 'lucide-react';
 import { TelegramStatus } from '../types';
+import { getTelegramStatus } from '../services/telegramService';
 
 interface SyncHubProps {
   totalImages: number;
@@ -31,8 +32,7 @@ export const SyncHub: React.FC<SyncHubProps> = ({
   const fetchStatus = async () => {
     setIsLoadingStatus(true);
     try {
-      const res = await fetch('/api/telegram/status');
-      const data = await res.json();
+      const data = await getTelegramStatus();
       setTgStatus(data);
     } catch (err: any) {
       setTgStatus({ ok: false, error: err.message });

@@ -29,12 +29,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Install Project Dependencies
-        run: npm install
+        run: npm ci || npm install
 
       - name: Build Vite Production Assets
-        run: npx vite build
+        run: npm run build:client
+
+      - name: Ensure SPA & GitHub Pages compatibility (.nojekyll & 404)
+        run: |
+          touch dist/.nojekyll
+          cp dist/index.html dist/404.html
 
       - name: Setup Pages Configuration
         uses: actions/configure-pages@v5
@@ -46,6 +52,7 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v4
+
 
 

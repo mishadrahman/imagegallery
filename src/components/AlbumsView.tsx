@@ -7,6 +7,7 @@ import {
   Plus
 } from 'lucide-react';
 import { GalleryImage } from '../types';
+import { resolveImageUrl } from '../services/telegramService';
 
 interface AlbumsViewProps {
   images: GalleryImage[];
@@ -111,7 +112,7 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
                 {coverImages.length > 0 ? (
                   <div className="w-full h-full relative">
                     <img
-                      src={coverImages[0].directUrl}
+                      src={resolveImageUrl(coverImages[0])}
                       alt={album}
                       className="w-full h-full object-cover rounded-xl sm:rounded-2xl group-hover:scale-105 transition-transform duration-500"
                       loading="lazy"
@@ -121,7 +122,7 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
                         {coverImages.slice(1).map((sub) => (
                           <img
                             key={sub.id}
-                            src={sub.directUrl}
+                            src={resolveImageUrl(sub)}
                             alt=""
                             className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl object-cover border-2 border-neutral-900 shadow-md"
                           />
