@@ -225,8 +225,8 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
     setIsUploading(true);
     const uploadedImages: GalleryImage[] = [];
 
-    // Concurrent pool worker of 3 items at a time
-    const CONCURRENCY = 3;
+    // Sequential upload to avoid hitting Telegram rate limits (20 msgs/min per group)
+    const CONCURRENCY = 1;
     let currentIndex = 0;
 
     const worker = async () => {
@@ -235,6 +235,10 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
         try {
           const result = await uploadSingleItem(item);
           uploadedImages.push(result);
+          // Wait 3.5 seconds between uploads to respect Telegram's ~20/min limit
+          if (currentIndex < pendingItems.length) {
+            await new Promise(r => setTimeout(r, 3500));
+          }
         } catch (err: any) {
           console.error(`Error uploading item ${item.title}:`, err);
           setQueue((prev) =>
@@ -584,7 +588,7 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
               {isUploading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Uploading...</span>
+                  <span>Uploading ({successCount}/{queue.length})...</span>
                 </>
               ) : isOptimizing ? (
                 <>
@@ -754,7 +758,7 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
             {isUploading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Uploading {uploadingCount || pendingCount} Photos...</span>
+                <span>Uploading ({successCount}/{queue.length})...</span>
               </>
             ) : isOptimizing ? (
               <>
