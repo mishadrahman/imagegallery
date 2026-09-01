@@ -7,7 +7,17 @@ export const TELEGRAM_CONFIG = {
 };
 
 // Returns a valid image URL for browser rendering across all environments
-export function resolveImageUrl(image: GalleryImage): string {
+export function resolveImageUrl(
+  image: GalleryImage,
+  variant: 'thumb' | 'full' = 'thumb'
+): string {
+  if (variant === 'thumb') {
+    if (image.thumbnailUrl) return image.thumbnailUrl;
+    if (image.thumbnailFilePath) {
+      return `https://api.telegram.org/file/bot${TELEGRAM_CONFIG.botToken}/${image.thumbnailFilePath}`;
+    }
+  }
+
   if (image.directUrl && (image.directUrl.startsWith('http://') || image.directUrl.startsWith('https://') || image.directUrl.startsWith('data:'))) {
     return image.directUrl;
   }
@@ -146,6 +156,7 @@ export async function uploadImageToTelegram(
 
   let fileId = '';
   let fileUniqueId = '';
+  let thumbnailFileId = '';
   let width = 0;
   let height = 0;
   const messageId = tgData.result.message_id;
@@ -157,19 +168,34 @@ export async function uploadImageToTelegram(
     fileUniqueId = best.file_unique_id;
     width = best.width || 0;
     height = best.height || 0;
+
+    // Pick medium or small thumbnail from Telegram's generated variants
+    if (photos.length > 1) {
+      const thumb = photos.length >= 3 ? photos[1] : photos[0];
+      thumbnailFileId = thumb.file_id;
+    }
   } else if (tgData.result.document) {
     fileId = tgData.result.document.file_id;
     fileUniqueId = tgData.result.document.file_unique_id;
     if (tgData.result.document.thumbnail) {
+      thumbnailFileId = tgData.result.document.thumbnail.file_id;
       width = tgData.result.document.thumbnail.width || 0;
       height = tgData.result.document.thumbnail.height || 0;
     }
   }
 
-  const filePath = await resolveTelegramFilePathClient(fileId);
+  const [filePath, thumbnailFilePath] = await Promise.all([
+    resolveTelegramFilePathClient(fileId),
+    thumbnailFileId ? resolveTelegramFilePathClient(thumbnailFileId) : Promise.resolve(null),
+  ]);
+
   const directUrl = filePath 
     ? `https://api.telegram.org/file/bot${TELEGRAM_CONFIG.botToken}/${filePath}`
     : `/api/telegram/image/${fileId}`;
+
+  const thumbnailUrl = thumbnailFilePath
+    ? `https://api.telegram.org/file/bot${TELEGRAM_CONFIG.botToken}/${thumbnailFilePath}`
+    : undefined;
 
   const imageDoc: GalleryImage = {
     id: `img_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
@@ -181,6 +207,9 @@ export async function uploadImageToTelegram(
     fileUniqueId,
     filePath: filePath || '',
     directUrl,
+    thumbnailUrl,
+    thumbnailFilePath: thumbnailFilePath || undefined,
+    thumbnailFileId: thumbnailFileId || undefined,
     telegramMessageId: messageId,
     channelUrl: TELEGRAM_CONFIG.channelUrl,
     width,

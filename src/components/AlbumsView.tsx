@@ -112,7 +112,7 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
                 {coverImages.length > 0 ? (
                   <div className="w-full h-full relative">
                     <img
-                      src={resolveImageUrl(coverImages[0])}
+                      src={resolveImageUrl(coverImages[0], 'thumb')}
                       alt={album}
                       className="w-full h-full object-cover rounded-xl sm:rounded-2xl group-hover:scale-105 transition-transform duration-500"
                       loading="lazy"
@@ -122,7 +122,7 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
                         {coverImages.slice(1).map((sub) => (
                           <img
                             key={sub.id}
-                            src={resolveImageUrl(sub)}
+                            src={resolveImageUrl(sub, 'thumb')}
                             alt=""
                             className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl object-cover border-2 border-neutral-900 shadow-md"
                           />

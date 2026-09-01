@@ -8,11 +8,17 @@ export interface GalleryImage {
   fileUniqueId?: string;
   filePath?: string;
   directUrl: string;
+  thumbnailUrl?: string;
+  thumbnailFilePath?: string;
+  thumbnailFileId?: string;
+  microThumbnail?: string;
   telegramMessageId?: number;
   channelUrl?: string;
   width?: number;
   height?: number;
   fileSize?: number;
+  originalFileSize?: number;
+  savedPercent?: number;
   mimeType?: string;
   isFavorite?: boolean;
   createdAt: number;
@@ -32,6 +38,9 @@ export interface UploadQueueItem {
   error?: string;
   uploadedImage?: GalleryImage;
   resultImage?: GalleryImage;
+  originalSize?: number;
+  optimizedSize?: number;
+  savedPercent?: number;
 }
 
 export interface TelegramStatus {

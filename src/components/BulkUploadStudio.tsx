@@ -17,11 +17,16 @@ import {
   FolderPlus,
   RefreshCw,
   Copy,
-  Folder
+  Folder,
+  Zap,
+  Smartphone,
+  SlidersHorizontal,
+  HardDrive
 } from 'lucide-react';
 import { UploadQueueItem, GalleryImage } from '../types';
 import { saveGalleryImage } from '../services/firebase';
 import { uploadImageToTelegram } from '../services/telegramService';
+import { compressImage, CompressionQuality } from '../utils/imageCompressor';
 
 interface BulkUploadStudioProps {
   existingAlbums: string[];
@@ -39,8 +44,10 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
   const [newAlbumInput, setNewAlbumInput] = useState<string>('');
   const [isCreatingAlbum, setIsCreatingAlbum] = useState<boolean>(false);
   const [batchTags, setBatchTags] = useState<string>('Personal');
+  const [compressionMode, setCompressionMode] = useState<CompressionQuality>('smart');
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isOptimizing, setIsOptimizing] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -65,10 +72,13 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
 
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [batchAlbum, batchTags]);
+  }, [batchAlbum, batchTags, compressionMode]);
 
-  const addFilesToQueue = (files: FileList | File[]) => {
-    const newItems: UploadQueueItem[] = Array.from(files).map((file) => {
+  const addFilesToQueue = async (files: FileList | File[]) => {
+    setIsOptimizing(true);
+    const rawFiles = Array.from(files);
+
+    const initialItems: UploadQueueItem[] = rawFiles.map((file) => {
       const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
       const formattedTitle = nameWithoutExt
         .replace(/[_-]/g, " ")
@@ -81,13 +91,38 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
         title: formattedTitle || 'My Photo',
         caption: '',
         album: batchAlbum,
-        tags: batchTags.split(',').map(t => t.trim()).filter(Boolean),
+        tags: batchTags.split(',').map((t) => t.trim()).filter(Boolean),
         status: 'idle',
         progress: 0,
+        originalSize: file.size,
       };
     });
 
-    setQueue((prev) => [...prev, ...newItems]);
+    setQueue((prev) => [...prev, ...initialItems]);
+
+    // Asynchronously optimize image files to save MBs & bandwidth
+    for (let i = 0; i < initialItems.length; i++) {
+      const item = initialItems[i];
+      try {
+        const comp = await compressImage(item.file, compressionMode);
+        setQueue((prev) =>
+          prev.map((q) =>
+            q.id === item.id
+              ? {
+                  ...q,
+                  file: comp.file,
+                  optimizedSize: comp.compressedSize,
+                  savedPercent: comp.savedPercent,
+                  previewUrl: comp.thumbnailBase64 || q.previewUrl,
+                }
+              : q
+          )
+        );
+      } catch (err) {
+        console.warn('Compression skipped for item:', item.title, err);
+      }
+    }
+    setIsOptimizing(false);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -440,6 +475,65 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
           </div>
 
         </div>
+
+        {/* Smart Compression & Data Saver Bar */}
+        <div className="pt-3 border-t border-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2 text-neutral-300">
+            <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+            <div>
+              <div className="text-xs font-semibold text-white">
+                Bandwidth & Speed Optimizer (স্মার্ট কম্প্রেশন)
+              </div>
+              <div className="text-[10px] text-neutral-400">
+                স্বয়ংক্রিয়ভাবে 70-90% এমবি সাশ্রয় করে এবং ব্রাউজারে নিমিষে লোড করায়।
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-neutral-950 p-1 rounded-xl border border-neutral-800 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setCompressionMode('smart')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                compressionMode === 'smart'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+              title="Best balance: Crystal clear quality + 85% size reduction"
+            >
+              <Zap className="w-3 h-3 text-amber-300" />
+              <span>Smart (Recommended)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCompressionMode('saver')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                compressionMode === 'saver'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+              title="Mobile Data Saver: Ultra fast upload, ~150KB per photo"
+            >
+              <Smartphone className="w-3 h-3 text-emerald-400" />
+              <span>Data Saver</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCompressionMode('original')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                compressionMode === 'original'
+                  ? 'bg-neutral-800 text-white shadow-sm'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+              title="Keep full uncompressed original size (larger file size)"
+            >
+              <HardDrive className="w-3 h-3 text-neutral-400" />
+              <span>Original</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Upload Queue Section */}
@@ -589,7 +683,14 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
 
                   {/* Item Footer */}
                   <div className="pt-1 border-t border-neutral-800/50 flex items-center justify-between text-[10px] text-neutral-500">
-                    <span>{(item.file.size / (1024 * 1024)).toFixed(2)} MB</span>
+                    <div className="flex items-center gap-1.5">
+                      <span>{(item.file.size / (1024 * 1024)).toFixed(2)} MB</span>
+                      {item.savedPercent && item.savedPercent > 0 ? (
+                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-semibold text-[9px]">
+                          -{item.savedPercent}%
+                        </span>
+                      ) : null}
+                    </div>
 
                     {item.status === 'success' && item.resultImage && (
                       <button

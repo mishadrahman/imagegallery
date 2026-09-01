@@ -45,6 +45,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSelectMode, setIsSelectMode] = useState(false);
+  const [visibleCount, setVisibleCount] = useState<number>(24);
 
   // Extract all unique albums
   const albumList = useMemo(() => {
@@ -90,6 +91,11 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
 
     return result;
   }, [images, selectedAlbum, searchQuery, sortOption]);
+
+  // Paginated batch slice for high performance & low MB consumption
+  const visibleImages = useMemo(() => {
+    return filteredImages.slice(0, visibleCount);
+  }, [filteredImages, visibleCount]);
 
   const handleCopyLink = async (e: React.MouseEvent, img: GalleryImage) => {
     e.stopPropagation();
@@ -328,7 +334,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
       {/* Gallery Grid Rendering (Mobile 2 columns, Desktop 3-4 columns) */}
       {viewMode === 'masonry' && (
         <div className="columns-2 sm:columns-2 md:columns-3 lg:columns-4 gap-3 sm:gap-4 space-y-3 sm:space-y-4">
-          {filteredImages.map((img, idx) => (
+          {visibleImages.map((img, idx) => (
             <div key={img.id} className="break-inside-avoid">
               <ImageCard
                 image={img}
@@ -350,7 +356,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
 
       {viewMode === 'grid' && (
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-          {filteredImages.map((img, idx) => (
+          {visibleImages.map((img, idx) => (
             <div key={img.id} className="aspect-square">
               <ImageCard
                 image={img}
@@ -373,7 +379,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
 
       {viewMode === 'compact' && (
         <div className="space-y-2">
-          {filteredImages.map((img, idx) => (
+          {visibleImages.map((img, idx) => (
             <CompactImageRow
               key={img.id}
               image={img}
@@ -389,6 +395,21 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
               formatFileSize={formatFileSize}
             />
           ))}
+        </div>
+      )}
+
+      {/* Pagination / Load More Bar to prevent high MB usage */}
+      {filteredImages.length > visibleImages.length && (
+        <div className="pt-8 pb-4 text-center flex flex-col items-center justify-center space-y-2">
+          <div className="text-xs text-neutral-400">
+            Showing {visibleImages.length} of {filteredImages.length} photos ({filteredImages.length - visibleImages.length} remaining)
+          </div>
+          <button
+            onClick={() => setVisibleCount((prev) => prev + 24)}
+            className="px-6 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold border border-neutral-700 transition-all shadow-lg hover:border-indigo-500/50"
+          >
+            Load More Photos (আরো লোড করুন)
+          </button>
         </div>
       )}
 
@@ -436,16 +457,19 @@ const ImageCard: React.FC<CardProps> = ({
           : 'border-neutral-800/80 hover:border-neutral-700 hover:shadow-xl hover:shadow-black/50'
       } ${isAspectSquare ? 'h-full w-full' : ''}`}
     >
-      {/* Loading Skeleton */}
+      {/* Loading Skeleton & Blur-up Placeholder */}
       {!imgLoaded && !hasError && (
-        <div className="absolute inset-0 bg-neutral-800/70 animate-pulse flex items-center justify-center min-h-[140px]">
-          <span className="text-[11px] text-neutral-500">Loading...</span>
+        <div 
+          className="absolute inset-0 bg-neutral-800/70 animate-pulse flex items-center justify-center min-h-[140px]"
+          style={image.microThumbnail ? { backgroundImage: `url(${image.microThumbnail})`, backgroundSize: 'cover', filter: 'blur(8px)' } : undefined}
+        >
+          <span className="text-[11px] text-neutral-400 bg-neutral-900/60 px-2 py-0.5 rounded backdrop-blur-sm">Loading...</span>
         </div>
       )}
 
-      {/* Main Image */}
+      {/* Main Image (Uses lightweight thumbnail for fast grid browsing) */}
       <img
-        src={resolveImageUrl(image)}
+        src={resolveImageUrl(image, 'thumb')}
         alt={image.title}
         loading="lazy"
         referrerPolicy="no-referrer"
@@ -574,7 +598,7 @@ const CompactImageRow: React.FC<CardProps> = ({
         )}
 
         <img
-          src={resolveImageUrl(image)}
+          src={resolveImageUrl(image, 'thumb')}
           alt={image.title}
           className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl object-cover border border-neutral-800 shrink-0"
           loading="lazy"
