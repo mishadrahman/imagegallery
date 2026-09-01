@@ -68,44 +68,29 @@ export default function App() {
     }
   };
 
-  const handleDeleteImage = async (id: string, tgMessageId?: number) => {
+  const handleDeleteImage = async (id: string) => {
     try {
       // Optimistically update UI and local state immediately
       setImages((prev) => prev.filter((img) => img.id !== id));
       
-      // Delete from Firestore & local storage
+      // Delete from Firestore & local storage (Telegram media remains safe in channel)
       await deleteGalleryImage(id);
-      
-      // Clean up message from Telegram channel if ID exists
-      if (tgMessageId) {
-        deleteTelegramMessage(tgMessageId).catch((e) =>
-          console.warn('Telegram channel message deletion skipped/failed:', e)
-        );
-      }
     } catch (err) {
-      console.error('Failed to delete image:', err);
+      console.error('Failed to delete image from Firebase:', err);
     }
   };
 
   const handleBatchDelete = async (ids: string[]) => {
     try {
       const idSet = new Set(ids);
-      const itemsToDelete = images.filter((img) => idSet.has(img.id));
 
       // Optimistically update UI and local state immediately
       setImages((prev) => prev.filter((img) => !idSet.has(img.id)));
 
-      // Delete in batch from Firestore & local storage
+      // Delete in batch from Firestore & local storage (Telegram media remains safe in channel)
       await batchDeleteGalleryImages(ids);
-
-      // Clean up from Telegram channel
-      itemsToDelete.forEach((img) => {
-        if (img.telegramMessageId) {
-          deleteTelegramMessage(img.telegramMessageId).catch(() => {});
-        }
-      });
     } catch (err) {
-      console.error('Failed to batch delete images:', err);
+      console.error('Failed to batch delete images from Firebase:', err);
     }
   };
 

@@ -53,6 +53,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [copiedFileId, setCopiedFileId] = useState<boolean>(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+  const [fullImgLoaded, setFullImgLoaded] = useState<boolean>(false);
 
   // Touch swipe state for mobile
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
@@ -74,6 +75,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       setEditTags(currentImage.tags?.join(', ') || '');
       setZoom(1);
       setRotation(0);
+      setFullImgLoaded(false);
     }
   }, [currentIndex, currentImage]);
 
@@ -363,17 +365,29 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           </>
         )}
 
-        {/* Displayed Image */}
+        {/* Displayed Image with Progressive Blur-Up */}
         <div className="relative max-w-full max-h-full flex items-center justify-center overflow-hidden">
+          {!fullImgLoaded && (currentImage.microThumbnail || currentImage.thumbnailUrl) && (
+            <img
+              src={currentImage.microThumbnail || currentImage.thumbnailUrl}
+              alt=""
+              aria-hidden="true"
+              className="absolute max-h-[80vh] sm:max-h-[85vh] max-w-[95vw] sm:max-w-[88vw] object-contain rounded-xl filter blur-md scale-95 opacity-70 pointer-events-none transition-opacity duration-300"
+            />
+          )}
+
           <img
-            src={resolveImageUrl(currentImage)}
+            src={resolveImageUrl(currentImage, 'full')}
             alt={currentImage.title}
             referrerPolicy="no-referrer"
+            onLoad={() => setFullImgLoaded(true)}
             style={{
               transform: `scale(${zoom}) rotate(${rotation}deg)`,
-              transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)',
+              transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.3s ease-in-out',
             }}
-            className="max-h-[80vh] sm:max-h-[85vh] max-w-[95vw] sm:max-w-[88vw] object-contain rounded-xl shadow-2xl drop-shadow-2xl"
+            className={`max-h-[80vh] sm:max-h-[85vh] max-w-[95vw] sm:max-w-[88vw] object-contain rounded-xl shadow-2xl drop-shadow-2xl ${
+              fullImgLoaded ? 'opacity-100' : 'opacity-0'
+            }`}
           />
         </div>
 

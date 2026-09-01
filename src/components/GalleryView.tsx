@@ -484,13 +484,24 @@ const ImageCard: React.FC<CardProps> = ({
           : 'border-neutral-800/80 hover:border-neutral-700 hover:shadow-xl hover:shadow-black/50'
       } ${isAspectSquare ? 'h-full w-full' : ''}`}
     >
-      {/* Loading Skeleton & Blur-up Placeholder */}
+      {/* Loading Skeleton & Progressive Blur-Up Placeholder */}
       {!imgLoaded && !hasError && (
-        <div 
-          className="absolute inset-0 bg-neutral-800/70 animate-pulse flex items-center justify-center min-h-[140px]"
-          style={image.microThumbnail ? { backgroundImage: `url(${image.microThumbnail})`, backgroundSize: 'cover', filter: 'blur(8px)' } : undefined}
-        >
-          <span className="text-[11px] text-neutral-400 bg-neutral-900/60 px-2 py-0.5 rounded backdrop-blur-sm">Loading...</span>
+        <div className="absolute inset-0 bg-neutral-900 overflow-hidden min-h-[140px] flex items-center justify-center">
+          {image.microThumbnail ? (
+            <div
+              className="absolute inset-0 scale-110 filter blur-lg transition-opacity duration-300"
+              style={{
+                backgroundImage: `url(${image.microThumbnail})`,
+                backgroundPosition: 'center',
+                backgroundSize: 'cover',
+              }}
+            />
+          ) : (
+            <div className="absolute inset-0 bg-neutral-800/60 animate-pulse" />
+          )}
+          <span className="relative z-10 text-[10px] text-neutral-300 font-medium bg-neutral-950/70 px-2 py-0.5 rounded-md backdrop-blur-md">
+            Loading...
+          </span>
         </div>
       )}
 
@@ -505,7 +516,7 @@ const ImageCard: React.FC<CardProps> = ({
           setHasError(true);
           setImgLoaded(true);
         }}
-        className={`w-full object-cover transition-transform duration-500 group-hover:scale-105 ${
+        className={`w-full object-cover transition-all duration-300 group-hover:scale-105 ${
           isAspectSquare ? 'h-full' : 'h-auto max-h-[500px]'
         } ${imgLoaded ? 'opacity-100' : 'opacity-0'}`}
       />

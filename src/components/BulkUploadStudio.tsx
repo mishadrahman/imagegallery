@@ -190,6 +190,17 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
       tags: item.tags,
     });
 
+    // Attach client-side micro-thumbnail (LQIP) and size savings if present
+    if (item.previewUrl && item.previewUrl.startsWith('data:image')) {
+      imageDoc.microThumbnail = item.previewUrl;
+    }
+    if (item.originalSize) {
+      imageDoc.originalFileSize = item.originalSize;
+    }
+    if (item.savedPercent) {
+      imageDoc.savedPercent = item.savedPercent;
+    }
+
     // Save record to Firestore for permanent persistence
     await saveGalleryImage(imageDoc);
 

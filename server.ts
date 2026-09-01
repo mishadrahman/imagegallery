@@ -111,49 +111,35 @@ app.post("/api/upload-single", upload.single("image"), async (req, res) => {
       `\n⏰ ${new Date().toLocaleString()}`
     ].filter(Boolean).join("");
 
-    // 1. Try sending as standard Photo first
     let tgData: any = null;
-    let isDocumentFallback = false;
 
-    // Check if format is non-standard for sendPhoto (e.g. svg, gif, etc.)
-    const isStandardPhotoMime = !file.mimetype || file.mimetype.includes("jpeg") || file.mimetype.includes("jpg") || file.mimetype.includes("png");
+    // Helper to send photo with retry on 429
+    const sendPhotoWithRetry = async (retries = 3): Promise<any> => {
+      const photoFormData = new FormData();
+      const photoBlob = new Blob([file.buffer], { type: file.mimetype || "image/jpeg" });
+      photoFormData.append("chat_id", CHAT_ID);
+      photoFormData.append("photo", photoBlob, file.originalname || "image.jpg");
+      photoFormData.append("caption", tgCaptionParts.slice(0, 1024));
 
-    if (isStandardPhotoMime) {
-      try {
-        const photoFormData = new FormData();
-        const photoBlob = new Blob([file.buffer], { type: file.mimetype || "image/jpeg" });
-        photoFormData.append("chat_id", CHAT_ID);
-        photoFormData.append("photo", photoBlob, file.originalname || "image.jpg");
-        photoFormData.append("caption", tgCaptionParts.slice(0, 1024));
-
-        const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
-          method: "POST",
-          body: photoFormData,
-        });
-        tgData = await tgRes.json();
-      } catch {
-        // If sendPhoto request encountered an issue, fallback will proceed
-      }
-    }
-
-    // 2. If sendPhoto was skipped or rejected by Telegram (e.g. PHOTO_INVALID_DIMENSIONS, high-res panorama, SVG, etc.), send as full-fidelity Document
-    if (!tgData || !tgData.ok) {
-      const docFormData = new FormData();
-      const docBlob = new Blob([file.buffer], { type: file.mimetype || "image/jpeg" });
-      docFormData.append("chat_id", CHAT_ID);
-      docFormData.append("document", docBlob, file.originalname || "image.jpg");
-      docFormData.append("caption", tgCaptionParts.slice(0, 1024));
-
-      const docRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+      const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
         method: "POST",
-        body: docFormData,
+        body: photoFormData,
       });
-      tgData = await docRes.json();
-      isDocumentFallback = true;
-    }
 
-    if (!tgData.ok || !tgData.result) {
-      console.error("Both Telegram sendPhoto and sendDocument failed:", tgData);
+      const data = await response.json();
+      if (!data.ok && data.error_code === 429 && retries > 0) {
+        const retryAfter = data.parameters?.retry_after || 5;
+        console.warn(`Telegram API rate limit hit. Retrying after ${retryAfter} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+        return sendPhotoWithRetry(retries - 1);
+      }
+      return data;
+    };
+
+    tgData = await sendPhotoWithRetry();
+
+    if (!tgData || !tgData.ok) {
+      console.error("Telegram sendPhoto failed:", tgData);
       return res.status(500).json({
         ok: false,
         error: tgData.description || "Failed to upload file to Telegram channel",
@@ -175,17 +161,8 @@ app.post("/api/upload-single", upload.single("image"), async (req, res) => {
       width = bestPhoto.width || 0;
       height = bestPhoto.height || 0;
       fileSize = bestPhoto.file_size || file.size;
-    } else if (tgData.result.document) {
-      const doc = tgData.result.document;
-      fileId = doc.file_id;
-      fileUniqueId = doc.file_unique_id;
-      fileSize = doc.file_size || file.size;
-      if (doc.thumbnail) {
-        width = doc.thumbnail.width || 0;
-        height = doc.thumbnail.height || 0;
-      }
     } else {
-      return res.status(500).json({ ok: false, error: "Telegram did not return photo or document object" });
+      return res.status(500).json({ ok: false, error: "Telegram did not return photo object" });
     }
 
     // Retrieve file_path
