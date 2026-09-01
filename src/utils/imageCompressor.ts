@@ -21,7 +21,10 @@ export async function compressImage(
   const originalSize = file.size;
 
   // If user selected original or file is not an image (e.g. gif or raw), return as is
-  if (mode === 'original' || !file.type.startsWith('image/') || file.type === 'image/gif') {
+  const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
+  const isLikelyImage = file.type.startsWith('image/') || file.name.match(/\.(jpe?g|png|webp|heic|heif)$/i);
+
+  if (mode === 'original' || !isLikelyImage || isGif) {
     return {
       file,
       originalSize,

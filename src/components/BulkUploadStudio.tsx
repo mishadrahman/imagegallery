@@ -578,13 +578,18 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
 
             <button
               onClick={handleStartBulkUpload}
-              disabled={isUploading || pendingCount === 0}
+              disabled={isUploading || pendingCount === 0 || isOptimizing}
               className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2"
             >
               {isUploading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Uploading to Telegram & Firestore...</span>
+                  <span>Uploading...</span>
+                </>
+              ) : isOptimizing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Compressing {pendingCount} Photos...</span>
                 </>
               ) : (
                 <>
@@ -743,13 +748,18 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
         <div className="fixed bottom-16 md:hidden left-0 right-0 p-3 bg-neutral-950/95 backdrop-blur-xl border-t border-neutral-800 z-20 shadow-2xl">
           <button
             onClick={handleStartBulkUpload}
-            disabled={isUploading}
-            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-sky-600 text-white font-bold text-xs shadow-lg shadow-indigo-600/40 flex items-center justify-center gap-2"
+            disabled={isUploading || isOptimizing}
+            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-sky-600 text-white font-bold text-xs shadow-lg shadow-indigo-600/40 flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {isUploading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span>Uploading {uploadingCount || pendingCount} Photos...</span>
+              </>
+            ) : isOptimizing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Compressing...</span>
               </>
             ) : (
               <>

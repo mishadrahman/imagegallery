@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   X, 
   ChevronLeft, 
@@ -90,12 +90,27 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     return () => clearInterval(timer);
   }, [isSlideshow, currentIndex, images.length, slideshowInterval, onChangeIndex]);
 
+  // Mutable ref for onClose to avoid re-triggering effect
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // Handle safe closing (pops state if we are in lightbox history state)
+  const handleSafeClose = useCallback(() => {
+    if (window.history.state?.lightboxOpen) {
+      window.history.back();
+    } else {
+      onCloseRef.current();
+    }
+  }, []);
+
   // Keyboard navigation
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (isEditing) return;
       if (e.key === 'Escape') {
-        onClose();
+        handleSafeClose();
       } else if (e.key === 'ArrowLeft') {
         if (currentIndex > 0) onChangeIndex(currentIndex - 1);
         else onChangeIndex(images.length - 1);
@@ -106,13 +121,36 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         setIsSlideshow((prev) => !prev);
       }
     },
-    [isEditing, currentIndex, images.length, onChangeIndex, onClose]
+    [isEditing, currentIndex, images.length, onChangeIndex, handleSafeClose]
   );
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
+
+  // Handle mobile/hardware back button
+  useEffect(() => {
+    // Only push state if we haven't already (handles React 18 StrictMode double mount)
+    if (!window.history.state?.lightboxOpen) {
+      window.history.pushState({ lightboxOpen: true }, '');
+    }
+
+    const handlePopState = (e: PopStateEvent) => {
+      // If we navigated back to a state that is NOT the lightbox, we close it
+      if (!e.state?.lightboxOpen) {
+        onCloseRef.current();
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      // DO NOT call history.back() here. It causes race conditions in StrictMode.
+      // We handle popping history on deliberate UI closes via `handleSafeClose`.
+    };
+  }, []); // Run only once on mount
 
   if (!currentImage) return null;
 
@@ -328,7 +366,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           </button>
 
           <button
-            onClick={onClose}
+            onClick={handleSafeClose}
             title="Close (Esc)"
             className="p-2 rounded-xl bg-neutral-900/80 border border-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
           >
