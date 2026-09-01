@@ -1,0 +1,7 @@
+{
+  "name": "CloudPic Gallery",
+  "description": "Personal photo gallery and bulk uploader with Telegram permanent cloud storage and Firebase Firestore metadata sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
