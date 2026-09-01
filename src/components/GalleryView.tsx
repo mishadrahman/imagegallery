@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { GalleryImage, ViewMode, SortOption } from '../types';
 import { resolveImageUrl } from '../services/telegramService';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface GalleryViewProps {
   images: GalleryImage[];
@@ -46,6 +47,8 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [visibleCount, setVisibleCount] = useState<number>(24);
+  const [deleteModalOpen, setDeleteModalOpen] = useState<boolean>(false);
+  const [imagesToDelete, setImagesToDelete] = useState<GalleryImage[]>([]);
 
   // Extract all unique albums
   const albumList = useMemo(() => {
@@ -130,11 +133,27 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
     }
   };
 
-  const handleExecuteBatchDelete = () => {
+  const handleRequestDeleteSingle = (img: GalleryImage, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setImagesToDelete([img]);
+    setDeleteModalOpen(true);
+  };
+
+  const handleRequestBatchDelete = () => {
     if (selectedIds.size === 0) return;
-    const confirmDelete = window.confirm(`Are you sure you want to delete ${selectedIds.size} selected photo(s)?`);
-    if (confirmDelete) {
-      onBatchDelete(Array.from(selectedIds));
+    const items = images.filter((i) => selectedIds.has(i.id));
+    if (items.length === 0) return;
+    setImagesToDelete(items);
+    setDeleteModalOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (imagesToDelete.length === 1) {
+      const single = imagesToDelete[0];
+      await onDeleteImage(single.id, single.telegramMessageId);
+    } else if (imagesToDelete.length > 1) {
+      const ids = imagesToDelete.map((i) => i.id);
+      await onBatchDelete(ids);
       setSelectedIds(new Set());
       setIsSelectMode(false);
     }
@@ -298,11 +317,11 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
 
           <button
             disabled={selectedIds.size === 0}
-            onClick={handleExecuteBatchDelete}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-medium shadow-md shadow-rose-600/30 transition-all"
+            onClick={handleRequestBatchDelete}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md shadow-rose-600/30 transition-all cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>Delete ({selectedIds.size})</span>
+            <span>Delete Selected ({selectedIds.size})</span>
           </button>
         </div>
       )}
@@ -346,7 +365,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
                 onClick={() => onOpenLightbox(img, idx)}
                 onCopyLink={(e) => handleCopyLink(e, img)}
                 onToggleFavorite={() => onToggleFavorite(img.id, Boolean(img.isFavorite))}
-                onDelete={() => onDeleteImage(img.id, img.telegramMessageId)}
+                onDelete={() => handleRequestDeleteSingle(img)}
                 formatFileSize={formatFileSize}
               />
             </div>
@@ -369,7 +388,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
                 onClick={() => onOpenLightbox(img, idx)}
                 onCopyLink={(e) => handleCopyLink(e, img)}
                 onToggleFavorite={() => onToggleFavorite(img.id, Boolean(img.isFavorite))}
-                onDelete={() => onDeleteImage(img.id, img.telegramMessageId)}
+                onDelete={() => handleRequestDeleteSingle(img)}
                 formatFileSize={formatFileSize}
               />
             </div>
@@ -391,7 +410,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
               onClick={() => onOpenLightbox(img, idx)}
               onCopyLink={(e) => handleCopyLink(e, img)}
               onToggleFavorite={() => onToggleFavorite(img.id, Boolean(img.isFavorite))}
-              onDelete={() => onDeleteImage(img.id, img.telegramMessageId)}
+              onDelete={() => handleRequestDeleteSingle(img)}
               formatFileSize={formatFileSize}
             />
           ))}
@@ -412,6 +431,14 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
           </button>
         </div>
       )}
+
+      {/* Custom In-App Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={deleteModalOpen}
+        imagesToDelete={imagesToDelete}
+        onClose={() => setDeleteModalOpen(false)}
+        onConfirm={handleConfirmDelete}
+      />
 
     </div>
   );
@@ -551,7 +578,7 @@ const ImageCard: React.FC<CardProps> = ({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                if (window.confirm(`Delete "${image.title}"?`)) onDelete();
+                onDelete();
               }}
               title="Delete Photo"
               className="p-1 rounded hover:text-rose-400 transition-colors"
@@ -647,7 +674,7 @@ const CompactImageRow: React.FC<CardProps> = ({
         <button
           onClick={(e) => {
             e.stopPropagation();
-            if (window.confirm('Delete photo?')) onDelete();
+            onDelete();
           }}
           className="p-1.5 rounded-lg text-neutral-500 hover:text-rose-400"
         >

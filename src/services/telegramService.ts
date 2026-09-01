@@ -223,3 +223,33 @@ export async function uploadImageToTelegram(
 
   return imageDoc;
 }
+
+// Safely delete message from Telegram channel (supports direct client-side fallback)
+export async function deleteTelegramMessage(messageId: number): Promise<boolean> {
+  try {
+    // Try backend proxy if available
+    const serverRes = await fetch(`/api/telegram/message/${messageId}`, { method: 'DELETE' });
+    if (serverRes.ok) return true;
+  } catch {
+    // Fall back to direct Telegram API
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_CONFIG.botToken}/deleteMessage`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_CONFIG.chatId,
+          message_id: messageId,
+        }),
+      }
+    );
+    const data = await res.json();
+    return Boolean(data.ok);
+  } catch (err) {
+    console.warn('Could not delete Telegram message from channel:', err);
+    return false;
+  }
+}

@@ -23,6 +23,7 @@ import {
 import { GalleryImage } from '../types';
 import { updateImageDetails } from '../services/firebase';
 import { resolveImageUrl } from '../services/telegramService';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface LightboxModalProps {
   images: GalleryImage[];
@@ -51,6 +52,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [copiedFileId, setCopiedFileId] = useState<boolean>(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
 
   // Touch swipe state for mobile
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
@@ -313,6 +315,14 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             }`}
           >
             <Info className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            title="Delete Photo"
+            className="p-2 rounded-xl bg-neutral-900/80 border border-neutral-800 text-neutral-400 hover:text-rose-400 hover:bg-rose-950/40 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
           </button>
 
           <button
@@ -583,13 +593,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           {/* Delete Danger Zone */}
           <div className="pt-4 mt-4 border-t border-neutral-800/80">
             <button
-              onClick={() => {
-                const confirmed = window.confirm(`Permanently delete "${currentImage.title}"?`);
-                if (confirmed) {
-                  onDeleteImage(currentImage.id, currentImage.telegramMessageId);
-                  onClose();
-                }
-              }}
+              onClick={() => setShowDeleteConfirm(true)}
               className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-semibold border border-rose-500/20 transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -599,6 +603,17 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
         </aside>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={showDeleteConfirm}
+        imagesToDelete={[currentImage]}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={async () => {
+          await onDeleteImage(currentImage.id, currentImage.telegramMessageId);
+          onClose();
+        }}
+      />
 
     </div>
   );

@@ -13,6 +13,7 @@ import {
   batchDeleteGalleryImages,
   getLocalCache 
 } from './services/firebase';
+import { deleteTelegramMessage } from './services/telegramService';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'gallery' | 'upload' | 'albums' | 'sync'>('gallery');
@@ -69,12 +70,17 @@ export default function App() {
 
   const handleDeleteImage = async (id: string, tgMessageId?: number) => {
     try {
-      await deleteGalleryImage(id);
+      // Optimistically update UI and local state immediately
       setImages((prev) => prev.filter((img) => img.id !== id));
       
-      // Optionally clean up from Telegram channel in background
+      // Delete from Firestore & local storage
+      await deleteGalleryImage(id);
+      
+      // Clean up message from Telegram channel if ID exists
       if (tgMessageId) {
-        fetch(`/api/telegram/message/${tgMessageId}`, { method: 'DELETE' }).catch(console.warn);
+        deleteTelegramMessage(tgMessageId).catch((e) =>
+          console.warn('Telegram channel message deletion skipped/failed:', e)
+        );
       }
     } catch (err) {
       console.error('Failed to delete image:', err);
@@ -83,8 +89,21 @@ export default function App() {
 
   const handleBatchDelete = async (ids: string[]) => {
     try {
+      const idSet = new Set(ids);
+      const itemsToDelete = images.filter((img) => idSet.has(img.id));
+
+      // Optimistically update UI and local state immediately
+      setImages((prev) => prev.filter((img) => !idSet.has(img.id)));
+
+      // Delete in batch from Firestore & local storage
       await batchDeleteGalleryImages(ids);
-      setImages((prev) => prev.filter((img) => !ids.includes(img.id)));
+
+      // Clean up from Telegram channel
+      itemsToDelete.forEach((img) => {
+        if (img.telegramMessageId) {
+          deleteTelegramMessage(img.telegramMessageId).catch(() => {});
+        }
+      });
     } catch (err) {
       console.error('Failed to batch delete images:', err);
     }
