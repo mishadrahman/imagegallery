@@ -32,116 +32,7 @@ export const db = getFirestore(app);
 const COLLECTION_NAME = 'gallery_images';
 const LOCAL_STORAGE_KEY = 'cloudpic_cached_images';
 
-export const INITIAL_STARTER_IMAGES: GalleryImage[] = [
-  {
-    id: "starter_1",
-    title: "Golden Hour Mountain Ridge",
-    caption: "Sunset over the alpine peaks with glowing cloud layers.",
-    album: "Travel",
-    tags: ["Nature", "Mountains", "Sunset", "Landscape"],
-    fileId: "starter_tg_001",
-    directUrl: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1600&q=80",
-    telegramMessageId: 101,
-    channelUrl: "https://t.me/+V3OkDk0rM_82MmRl",
-    width: 1600,
-    height: 1067,
-    fileSize: 1845000,
-    mimeType: "image/jpeg",
-    isFavorite: true,
-    createdAt: Date.now() - 3600 * 1000 * 24 * 3,
-    uploadedAt: new Date(Date.now() - 3600 * 1000 * 24 * 3).toISOString()
-  },
-  {
-    id: "starter_2",
-    title: "Neon Cyberpunk Streets",
-    caption: "Tokyo night street photography with vivid neon reflections.",
-    album: "Portraits",
-    tags: ["Urban", "City", "Night", "Lights"],
-    fileId: "starter_tg_002",
-    directUrl: "https://images.unsplash.com/photo-1514565131-fce0801e5785?auto=format&fit=crop&w=1600&q=80",
-    telegramMessageId: 102,
-    channelUrl: "https://t.me/+V3OkDk0rM_82MmRl",
-    width: 1600,
-    height: 1067,
-    fileSize: 2150000,
-    mimeType: "image/jpeg",
-    isFavorite: false,
-    createdAt: Date.now() - 3600 * 1000 * 24 * 2,
-    uploadedAt: new Date(Date.now() - 3600 * 1000 * 24 * 2).toISOString()
-  },
-  {
-    id: "starter_3",
-    title: "Emerald Coast Wave Swell",
-    caption: "Crystalline turquoise sea cresting along tropical reef shoreline.",
-    album: "Travel",
-    tags: ["Ocean", "Coast", "Beach", "Water"],
-    fileId: "starter_tg_003",
-    directUrl: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1600&q=80",
-    telegramMessageId: 103,
-    channelUrl: "https://t.me/+V3OkDk0rM_82MmRl",
-    width: 1600,
-    height: 1067,
-    fileSize: 1980000,
-    mimeType: "image/jpeg",
-    isFavorite: true,
-    createdAt: Date.now() - 3600 * 1000 * 24 * 1,
-    uploadedAt: new Date(Date.now() - 3600 * 1000 * 24 * 1).toISOString()
-  },
-  {
-    id: "starter_4",
-    title: "Cozy Artisan Coffee Studio",
-    caption: "Morning roast and latte art in an old brick studio cafe.",
-    album: "Personal",
-    tags: ["Coffee", "Morning", "Aesthetic", "Cafe"],
-    fileId: "starter_tg_004",
-    directUrl: "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=1600&q=80",
-    telegramMessageId: 104,
-    channelUrl: "https://t.me/+V3OkDk0rM_82MmRl",
-    width: 1600,
-    height: 1067,
-    fileSize: 1420000,
-    mimeType: "image/jpeg",
-    isFavorite: false,
-    createdAt: Date.now() - 3600 * 1000 * 12,
-    uploadedAt: new Date(Date.now() - 3600 * 1000 * 12).toISOString()
-  },
-  {
-    id: "starter_5",
-    title: "Family Autumn Afternoon",
-    caption: "Golden maple tree canopy in the autumn park.",
-    album: "Family",
-    tags: ["Family", "Autumn", "Park", "Joy"],
-    fileId: "starter_tg_005",
-    directUrl: "https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&w=1600&q=80",
-    telegramMessageId: 105,
-    channelUrl: "https://t.me/+V3OkDk0rM_82MmRl",
-    width: 1600,
-    height: 1067,
-    fileSize: 2310000,
-    mimeType: "image/jpeg",
-    isFavorite: true,
-    createdAt: Date.now() - 3600 * 1000 * 6,
-    uploadedAt: new Date(Date.now() - 3600 * 1000 * 6).toISOString()
-  },
-  {
-    id: "starter_6",
-    title: "Nordic Minimalist Architecture",
-    caption: "Modern geometric facade with glass reflections and timber woodwork.",
-    album: "Events",
-    tags: ["Architecture", "Design", "Minimal", "Nordic"],
-    fileId: "starter_tg_006",
-    directUrl: "https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=1600&q=80",
-    telegramMessageId: 106,
-    channelUrl: "https://t.me/+V3OkDk0rM_82MmRl",
-    width: 1600,
-    height: 1067,
-    fileSize: 1650000,
-    mimeType: "image/jpeg",
-    isFavorite: false,
-    createdAt: Date.now() - 3600 * 1000 * 2,
-    uploadedAt: new Date(Date.now() - 3600 * 1000 * 2).toISOString()
-  }
-];
+export const INITIAL_STARTER_IMAGES: GalleryImage[] = [];
 
 // Helper to get local cache
 export function getLocalCache(): GalleryImage[] {
@@ -150,13 +41,21 @@ export function getLocalCache(): GalleryImage[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        // Filter out any leftover starter images from previous test sessions
+        const clean = parsed.filter(
+          (img: any) =>
+            img &&
+            typeof img.id === 'string' &&
+            !img.id.startsWith('starter_') &&
+            !(typeof img.directUrl === 'string' && img.directUrl.includes('unsplash.com'))
+        );
+        return clean;
       }
     }
-    return INITIAL_STARTER_IMAGES;
+    return [];
   } catch (err) {
     console.warn('Failed to read local cache', err);
-    return INITIAL_STARTER_IMAGES;
+    return [];
   }
 }
 
