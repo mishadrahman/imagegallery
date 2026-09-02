@@ -11,13 +11,16 @@ import {
   updateImageDetails, 
   deleteGalleryImage, 
   batchDeleteGalleryImages,
-  getLocalCache 
+  getLocalCache,
+  subscribeToAlbums,
+  saveAlbum
 } from './services/firebase';
 import { deleteTelegramMessage } from './services/telegramService';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'gallery' | 'upload' | 'albums' | 'sync'>('gallery');
   const [images, setImages] = useState<GalleryImage[]>(() => getLocalCache());
+  const [persistentAlbums, setPersistentAlbums] = useState<string[]>([]);
   const [selectedAlbum, setSelectedAlbum] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSyncing, setIsSyncing] = useState<boolean>(true);
@@ -29,7 +32,7 @@ export default function App() {
   // Subscribe to real-time updates from Firebase Firestore
   useEffect(() => {
     setIsSyncing(true);
-    const unsubscribe = subscribeToGalleryImages(
+    const unsubscribeImages = subscribeToGalleryImages(
       (updatedImages) => {
         setImages(updatedImages);
         setIsSyncing(false);
@@ -39,14 +42,23 @@ export default function App() {
         setIsSyncing(false);
       }
     );
+    
+    const unsubscribeAlbums = subscribeToAlbums(
+      (updatedAlbums) => {
+        setPersistentAlbums(updatedAlbums);
+      }
+    );
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeImages();
+      unsubscribeAlbums();
+    };
   }, []);
 
   // Compute unique albums
   const existingAlbums = Array.from(
-    new Set(images.map((img) => img.album).filter(Boolean))
-  );
+    new Set([...persistentAlbums, ...images.map((img) => img.album).filter(Boolean)])
+  ).sort();
   const totalAlbums = existingAlbums.length || 1;
 
   // Handlers
@@ -157,6 +169,7 @@ export default function App() {
         {activeTab === 'albums' && (
           <AlbumsView
             images={images}
+            existingAlbums={existingAlbums}
             onSelectAlbum={handleSelectAlbumFromView}
             onSwitchToUpload={handleSwitchToUploadWithAlbum}
           />

@@ -8,35 +8,34 @@ import {
 } from 'lucide-react';
 import { GalleryImage } from '../types';
 import { resolveImageUrl } from '../services/telegramService';
+import { saveAlbum } from '../services/firebase';
 
 interface AlbumsViewProps {
   images: GalleryImage[];
+  existingAlbums: string[];
   onSelectAlbum: (album: string) => void;
   onSwitchToUpload: (albumName?: string) => void;
 }
 
 export const AlbumsView: React.FC<AlbumsViewProps> = ({
   images,
+  existingAlbums,
   onSelectAlbum,
   onSwitchToUpload,
 }) => {
   const [newAlbumName, setNewAlbumName] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // Group images by album
-  const defaultCategories = ['Personal', 'Family', 'Friends', 'Travel', 'Portraits', 'Events'];
-  
-  // Collect all unique album names
-  const albumNames = Array.from(
-    new Set([...defaultCategories, ...images.map((img) => img.album).filter(Boolean)])
-  );
+  // Use the pre-computed robust album list from props
+  const albumNames = existingAlbums;
 
-  const handleCreateAlbum = (e: React.FormEvent) => {
+  const handleCreateAlbum = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAlbumName.trim()) return;
     const name = newAlbumName.trim();
     setShowAddModal(false);
     setNewAlbumName('');
+    await saveAlbum(name);
     onSwitchToUpload(name);
   };
 

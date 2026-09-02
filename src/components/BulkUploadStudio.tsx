@@ -24,7 +24,7 @@ import {
   HardDrive
 } from 'lucide-react';
 import { UploadQueueItem, GalleryImage } from '../types';
-import { saveGalleryImage } from '../services/firebase';
+import { saveGalleryImage, saveAlbum } from '../services/firebase';
 import { uploadImageToTelegram } from '../services/telegramService';
 import { compressImage, CompressionQuality } from '../utils/imageCompressor';
 
@@ -40,10 +40,10 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
   onGoToGallery,
 }) => {
   const [queue, setQueue] = useState<UploadQueueItem[]>([]);
-  const [batchAlbum, setBatchAlbum] = useState<string>('Personal');
+  const [batchAlbum, setBatchAlbum] = useState<string>('');
   const [newAlbumInput, setNewAlbumInput] = useState<string>('');
   const [isCreatingAlbum, setIsCreatingAlbum] = useState<boolean>(false);
-  const [batchTags, setBatchTags] = useState<string>('Personal');
+  const [batchTags, setBatchTags] = useState<string>('');
   const [compressionMode, setCompressionMode] = useState<CompressionQuality>('smart');
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -279,8 +279,11 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
   const successCount = queue.filter((i) => i.status === 'success').length;
   const uploadingCount = queue.filter((i) => i.status === 'uploading').length;
 
-  const defaultAlbums = ['Personal', 'Family', 'Friends', 'Travel', 'Portraits', 'Events', 'Work'];
-  const allAvailableAlbums = Array.from(new Set([...defaultAlbums, ...existingAlbums]));
+  const allAvailableAlbums = Array.from(new Set([
+    ...existingAlbums,
+    ...(batchAlbum ? [batchAlbum] : []),
+    ...queue.map(item => item.album).filter(Boolean)
+  ]));
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-24 md:pb-8">
@@ -426,6 +429,7 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
                   onChange={(e) => setBatchAlbum(e.target.value)}
                   className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-neutral-200 focus:outline-none focus:border-indigo-500"
                 >
+                  <option value="" disabled>Select an album...</option>
                   {allAvailableAlbums.map((alb) => (
                     <option key={alb} value={alb}>
                       📁 {alb}
@@ -452,11 +456,13 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
                 />
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     if (newAlbumInput.trim()) {
-                      setBatchAlbum(newAlbumInput.trim());
+                      const finalName = newAlbumInput.trim();
+                      setBatchAlbum(finalName);
                       setIsCreatingAlbum(false);
                       setNewAlbumInput('');
+                      await saveAlbum(finalName);
                     }
                   }}
                   className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl"
@@ -674,11 +680,12 @@ export const BulkUploadStudio: React.FC<BulkUploadStudioProps> = ({
 
                     <div className="grid grid-cols-2 gap-2">
                       <select
-                        value={item.album}
+                        value={item.album || ""}
                         disabled={item.status === 'uploading'}
                         onChange={(e) => handleUpdateItem(item.id, { album: e.target.value })}
                         className="bg-neutral-950/80 border border-neutral-800/80 rounded-lg px-2 py-1 text-[11px] text-neutral-300 focus:outline-none focus:border-indigo-500"
                       >
+                        <option value="" disabled>Select album</option>
                         {allAvailableAlbums.map((alb) => (
                           <option key={alb} value={alb}>
                             {alb}

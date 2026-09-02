@@ -104,9 +104,11 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
                 <div className="text-xs font-semibold text-white truncate">
                   {imagesToDelete[0].title}
                 </div>
-                <div className="text-[11px] text-neutral-400 mt-0.5">
-                  Album: <span className="text-indigo-400">{imagesToDelete[0].album || 'Personal'}</span>
-                </div>
+                {imagesToDelete[0].album && (
+                  <div className="text-[11px] text-neutral-400 mt-0.5">
+                    Album: <span className="text-indigo-400">{imagesToDelete[0].album}</span>
+                  </div>
+                )}
                 {imagesToDelete[0].fileSize && (
                   <div className="text-[10px] text-neutral-500 mt-0.5">
                     Size: {formatFileSize(imagesToDelete[0].fileSize)}

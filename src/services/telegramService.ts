@@ -201,7 +201,7 @@ export async function uploadImageToTelegram(
     id: `img_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     title: meta.title,
     caption: meta.caption || '',
-    album: meta.album || 'Personal',
+    album: meta.album || '',
     tags: meta.tags,
     fileId,
     fileUniqueId,

@@ -30,11 +30,14 @@ export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfi
 export const db = getFirestore(app);
 
 const COLLECTION_NAME = 'gallery_images';
+const ALBUMS_COLLECTION = 'user_albums';
 const LOCAL_STORAGE_KEY = 'cloudpic_cached_images';
+const ALBUMS_STORAGE_KEY = 'cloudpic_cached_albums';
 
 export const INITIAL_STARTER_IMAGES: GalleryImage[] = [];
 
 // Helper to get local cache
+
 export function getLocalCache(): GalleryImage[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -85,7 +88,7 @@ export function subscribeToGalleryImages(
             id: docSnap.id,
             title: data.title || 'Untitled',
             caption: data.caption || '',
-            album: data.album || 'Personal',
+            album: data.album || '',
             tags: Array.isArray(data.tags) ? data.tags : [],
             fileId: data.fileId || '',
             fileUniqueId: data.fileUniqueId || '',
@@ -133,7 +136,7 @@ export async function saveGalleryImage(image: GalleryImage): Promise<void> {
     await setDoc(docRef, {
       title: image.title,
       caption: image.caption || '',
-      album: image.album || 'Personal',
+      album: image.album || '',
       tags: image.tags || [],
       fileId: image.fileId,
       fileUniqueId: image.fileUniqueId || '',
@@ -228,5 +231,64 @@ export async function batchDeleteGalleryImages(ids: string[]): Promise<void> {
     const current = getLocalCache().filter(item => !ids.includes(item.id));
     setLocalCache(current);
     throw err;
+  }
+}
+
+// Subscribe to real-time album updates
+export function subscribeToAlbums(onData: (albums: string[]) => void): () => void {
+  try {
+    const q = query(collection(db, ALBUMS_COLLECTION), orderBy('createdAt', 'desc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const list: string[] = [];
+        snapshot.forEach((docSnap) => {
+          if (docSnap.data().name) {
+            list.push(docSnap.data().name);
+          }
+        });
+        localStorage.setItem(ALBUMS_STORAGE_KEY, JSON.stringify(list));
+        onData(list);
+      },
+      (err) => {
+        console.error('Firestore albums onSnapshot error:', err);
+        const cached = localStorage.getItem(ALBUMS_STORAGE_KEY);
+        if (cached) onData(JSON.parse(cached));
+      }
+    );
+  } catch (err) {
+    console.error('Error establishing Albums subscription:', err);
+    const cached = localStorage.getItem(ALBUMS_STORAGE_KEY);
+    if (cached) onData(JSON.parse(cached));
+    return () => {};
+  }
+}
+
+// Save an album name persistently
+export async function saveAlbum(name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  
+  try {
+    // Generate a safe document ID from the album name to prevent duplicates
+    const safeId = trimmed.toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const docRef = doc(db, ALBUMS_COLLECTION, safeId);
+    await setDoc(docRef, { name: trimmed, createdAt: Date.now() }, { merge: true });
+    
+    // Update local cache
+    const cached = localStorage.getItem(ALBUMS_STORAGE_KEY);
+    let list: string[] = cached ? JSON.parse(cached) : [];
+    if (!list.includes(trimmed)) {
+      list.unshift(trimmed);
+      localStorage.setItem(ALBUMS_STORAGE_KEY, JSON.stringify(list));
+    }
+  } catch (err) {
+    console.error('Error saving album to Firestore:', err);
+    const cached = localStorage.getItem(ALBUMS_STORAGE_KEY);
+    let list: string[] = cached ? JSON.parse(cached) : [];
+    if (!list.includes(trimmed)) {
+      list.unshift(trimmed);
+      localStorage.setItem(ALBUMS_STORAGE_KEY, JSON.stringify(list));
+    }
   }
 }

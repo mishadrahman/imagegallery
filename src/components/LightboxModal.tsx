@@ -21,7 +21,7 @@ import {
   Folder
 } from 'lucide-react';
 import { GalleryImage } from '../types';
-import { updateImageDetails } from '../services/firebase';
+import { updateImageDetails, saveAlbum } from '../services/firebase';
 import { resolveImageUrl } from '../services/telegramService';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 
@@ -71,7 +71,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     if (currentImage) {
       setEditTitle(currentImage.title || '');
       setEditCaption(currentImage.caption || '');
-      setEditAlbum(currentImage.album || 'Personal');
+      setEditAlbum(currentImage.album || '');
       setEditTags(currentImage.tags?.join(', ') || '');
       setZoom(1);
       setRotation(0);
@@ -223,16 +223,21 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         .map((t) => t.trim())
         .filter(Boolean);
 
+      const finalAlbum = editAlbum.trim() || '';
       await updateImageDetails(currentImage.id, {
         title: editTitle.trim() || 'Untitled',
         caption: editCaption.trim(),
-        album: editAlbum.trim() || 'Personal',
+        album: finalAlbum,
         tags: tagsArray,
       });
 
+      if (finalAlbum) {
+        await saveAlbum(finalAlbum);
+      }
+
       currentImage.title = editTitle;
       currentImage.caption = editCaption;
-      currentImage.album = editAlbum;
+      currentImage.album = finalAlbum;
       currentImage.tags = tagsArray;
 
       setIsEditing(false);
@@ -527,9 +532,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                       {currentImage.title}
                     </h3>
                     <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">
-                        {currentImage.album || 'Personal'}
-                      </span>
+                      {currentImage.album && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">
+                          {currentImage.album}
+                        </span>
+                      )}
                       <span className="text-xs text-neutral-500">
                         {new Date(currentImage.createdAt).toLocaleDateString()}
                       </span>
