@@ -16,7 +16,8 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { GalleryImage, ViewMode, SortOption } from '../types';
-import { resolveImageUrl } from '../services/telegramService';
+import { resolveImageUrl, fetchFreshTelegramUrl } from '../services/telegramService';
+import { updateImageDetails } from '../services/firebase';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface GalleryViewProps {
@@ -475,39 +476,72 @@ const ImageCard: React.FC<CardProps> = ({
 }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [activeSrc, setActiveSrc] = useState<string>(() => resolveImageUrl(image, 'thumb'));
+  const [attemptStage, setAttemptStage] = useState(0);
 
-  // Auto-retry up to 2 times on initial failure (e.g. momentary 4G cellular stutter)
-  const handleImageError = () => {
-    if (retryCount < 2) {
-      setTimeout(() => {
-        setRetryCount((prev) => prev + 1);
-      }, 1200);
-    } else {
-      setHasError(true);
-      setImgLoaded(false);
+  // Keep activeSrc updated if image changes
+  React.useEffect(() => {
+    setActiveSrc(resolveImageUrl(image, 'thumb'));
+    setImgLoaded(false);
+    setHasError(false);
+    setAttemptStage(0);
+  }, [image.id, image.filePath, image.fileId]);
+
+  // Intelligent multi-tier error handler with automatic Telegram self-healing
+  const handleImageError = async () => {
+    // Stage 0 -> Stage 1: Try dynamic Telegram getFile resolution
+    if (attemptStage === 0 && image.fileId) {
+      setAttemptStage(1);
+      const freshUrl = await fetchFreshTelegramUrl(image.fileId, (freshPath, newUrl) => {
+        if (image.id) {
+          updateImageDetails(image.id, { filePath: freshPath, directUrl: newUrl }).catch(() => {});
+        }
+      });
+      if (freshUrl && freshUrl !== activeSrc) {
+        setActiveSrc(freshUrl);
+        return;
+      }
     }
+
+    // Stage 1 -> Stage 2: Try local server proxy endpoint if available
+    if (attemptStage <= 1 && image.fileId) {
+      setAttemptStage(2);
+      const proxyUrl = `/api/telegram/image/${image.fileId}${image.filePath ? `?path=${encodeURIComponent(image.filePath)}` : ''}`;
+      if (proxyUrl !== activeSrc) {
+        setActiveSrc(proxyUrl);
+        return;
+      }
+    }
+
+    // All fallback tiers failed
+    setHasError(true);
+    setImgLoaded(false);
   };
 
-  const handleManualRetry = (e: React.MouseEvent) => {
+  const handleManualRetry = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsRetrying(true);
     setHasError(false);
     setImgLoaded(false);
-    setRetryCount((prev) => prev + 1);
-    setTimeout(() => setIsRetrying(false), 600);
-  };
 
-  const currentSrc = useMemo(() => {
-    const base = resolveImageUrl(image, 'thumb');
-    if (!base) return '';
-    if (retryCount > 0) {
-      const sep = base.includes('?') ? '&' : '?';
-      return `${base}${sep}r=${retryCount}`;
+    if (image.fileId) {
+      const fresh = await fetchFreshTelegramUrl(image.fileId, (freshPath, newUrl) => {
+        if (image.id) {
+          updateImageDetails(image.id, { filePath: freshPath, directUrl: newUrl }).catch(() => {});
+        }
+      });
+      if (fresh) {
+        setActiveSrc(`${fresh}?t=${Date.now()}`);
+        setIsRetrying(false);
+        return;
+      }
     }
-    return base;
-  }, [image, retryCount]);
+
+    const base = resolveImageUrl(image, 'thumb');
+    setActiveSrc(`${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`);
+    setTimeout(() => setIsRetrying(false), 500);
+  };
 
   return (
     <div
@@ -539,11 +573,12 @@ const ImageCard: React.FC<CardProps> = ({
         </div>
       )}
 
-      {/* Main Image (Uses lightweight thumbnail for fast grid browsing) */}
+      {/* Main Image (Uses lightweight thumbnail with no-referrer for direct CDN delivery) */}
       <img
-        src={currentSrc}
+        src={activeSrc}
         alt={image.title}
         loading="lazy"
+        referrerPolicy="no-referrer"
         onLoad={() => {
           setImgLoaded(true);
           setHasError(false);
@@ -659,12 +694,58 @@ const CompactImageRow: React.FC<CardProps> = ({
   formatFileSize,
 }) => {
   const [hasError, setHasError] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
+  const [activeSrc, setActiveSrc] = useState<string>(() => resolveImageUrl(image, 'thumb'));
+  const [attemptStage, setAttemptStage] = useState(0);
 
-  const imgSrc = useMemo(() => {
+  React.useEffect(() => {
+    setActiveSrc(resolveImageUrl(image, 'thumb'));
+    setHasError(false);
+    setAttemptStage(0);
+  }, [image.id, image.filePath, image.fileId]);
+
+  const handleRowError = async () => {
+    if (attemptStage === 0 && image.fileId) {
+      setAttemptStage(1);
+      const freshUrl = await fetchFreshTelegramUrl(image.fileId, (freshPath, newUrl) => {
+        if (image.id) {
+          updateImageDetails(image.id, { filePath: freshPath, directUrl: newUrl }).catch(() => {});
+        }
+      });
+      if (freshUrl && freshUrl !== activeSrc) {
+        setActiveSrc(freshUrl);
+        return;
+      }
+    }
+
+    if (attemptStage <= 1 && image.fileId) {
+      setAttemptStage(2);
+      const proxyUrl = `/api/telegram/image/${image.fileId}${image.filePath ? `?path=${encodeURIComponent(image.filePath)}` : ''}`;
+      if (proxyUrl !== activeSrc) {
+        setActiveSrc(proxyUrl);
+        return;
+      }
+    }
+
+    setHasError(true);
+  };
+
+  const handleRowRetry = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setHasError(false);
+    if (image.fileId) {
+      const fresh = await fetchFreshTelegramUrl(image.fileId, (freshPath, newUrl) => {
+        if (image.id) {
+          updateImageDetails(image.id, { filePath: freshPath, directUrl: newUrl }).catch(() => {});
+        }
+      });
+      if (fresh) {
+        setActiveSrc(`${fresh}?t=${Date.now()}`);
+        return;
+      }
+    }
     const base = resolveImageUrl(image, 'thumb');
-    return retryCount > 0 ? `${base}${base.includes('?') ? '&' : '?'}r=${retryCount}` : base;
-  }, [image, retryCount]);
+    setActiveSrc(`${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`);
+  };
 
   return (
     <div
@@ -689,11 +770,7 @@ const CompactImageRow: React.FC<CardProps> = ({
         {hasError ? (
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setHasError(false);
-              setRetryCount((c) => c + 1);
-            }}
+            onClick={handleRowRetry}
             className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-neutral-800/90 border border-neutral-700 flex items-center justify-center shrink-0 text-neutral-400 hover:text-white transition-colors cursor-pointer"
             title="Click to retry"
           >
@@ -701,17 +778,12 @@ const CompactImageRow: React.FC<CardProps> = ({
           </button>
         ) : (
           <img
-            src={imgSrc}
+            src={activeSrc}
             alt={image.title}
             className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl object-cover border border-neutral-800 shrink-0"
             loading="lazy"
-            onError={() => {
-              if (retryCount < 1) {
-                setTimeout(() => setRetryCount((c) => c + 1), 1000);
-              } else {
-                setHasError(true);
-              }
-            }}
+            referrerPolicy="no-referrer"
+            onError={handleRowError}
           />
         )}
 

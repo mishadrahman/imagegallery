@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { GalleryImage } from '../types';
 import { updateImageDetails, saveAlbum } from '../services/firebase';
-import { resolveImageUrl } from '../services/telegramService';
+import { resolveImageUrl, fetchFreshTelegramUrl } from '../services/telegramService';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface LightboxModalProps {
@@ -56,7 +56,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
   const [fullImgLoaded, setFullImgLoaded] = useState<boolean>(false);
   const [hasFullImgError, setHasFullImgError] = useState<boolean>(false);
-  const [lightboxRetry, setLightboxRetry] = useState<number>(0);
+  const [fullImgSrc, setFullImgSrc] = useState<string>('');
+  const [attemptStage, setAttemptStage] = useState<number>(0);
 
   // Touch swipe state for mobile
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
@@ -80,9 +81,55 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       setRotation(0);
       setFullImgLoaded(false);
       setHasFullImgError(false);
-      setLightboxRetry(0);
+      setAttemptStage(0);
+      setFullImgSrc(resolveImageUrl(currentImage, 'full'));
     }
   }, [currentIndex, currentImage]);
+
+  const handleFullImgError = async () => {
+    if (attemptStage === 0 && currentImage?.fileId) {
+      setAttemptStage(1);
+      const fresh = await fetchFreshTelegramUrl(currentImage.fileId, (freshPath, newUrl) => {
+        if (currentImage.id) {
+          updateImageDetails(currentImage.id, { filePath: freshPath, directUrl: newUrl }).catch(() => {});
+        }
+      });
+      if (fresh && fresh !== fullImgSrc) {
+        setFullImgSrc(fresh);
+        return;
+      }
+    }
+
+    if (attemptStage <= 1 && currentImage?.fileId) {
+      setAttemptStage(2);
+      const proxyUrl = `/api/telegram/image/${currentImage.fileId}${currentImage.filePath ? `?path=${encodeURIComponent(currentImage.filePath)}` : ''}`;
+      if (proxyUrl !== fullImgSrc) {
+        setFullImgSrc(proxyUrl);
+        return;
+      }
+    }
+
+    setHasFullImgError(true);
+    setFullImgLoaded(false);
+  };
+
+  const handleFullImgRetry = async () => {
+    setHasFullImgError(false);
+    setFullImgLoaded(false);
+    if (currentImage?.fileId) {
+      const fresh = await fetchFreshTelegramUrl(currentImage.fileId, (freshPath, newUrl) => {
+        if (currentImage.id) {
+          updateImageDetails(currentImage.id, { filePath: freshPath, directUrl: newUrl }).catch(() => {});
+        }
+      });
+      if (fresh) {
+        setFullImgSrc(`${fresh}?t=${Date.now()}`);
+        return;
+      }
+    }
+    const base = resolveImageUrl(currentImage, 'full');
+    setFullImgSrc(`${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`);
+  };
 
   // Slideshow timer
   useEffect(() => {
@@ -431,11 +478,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <p className="text-xs text-neutral-400">মোবাইল ডাটা ধীরগতি বা সংযোগে সাময়িক ত্রুটি থাকতে পারে</p>
               <button
                 type="button"
-                onClick={() => {
-                  setHasFullImgError(false);
-                  setFullImgLoaded(false);
-                  setLightboxRetry((r) => r + 1);
-                }}
+                onClick={handleFullImgRetry}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 cursor-pointer"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -444,23 +487,14 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             </div>
           ) : (
             <img
-              src={(() => {
-                const base = resolveImageUrl(currentImage, 'full');
-                return lightboxRetry > 0 ? `${base}${base.includes('?') ? '&' : '?'}r=${lightboxRetry}` : base;
-              })()}
+              src={fullImgSrc}
               alt={currentImage.title}
+              referrerPolicy="no-referrer"
               onLoad={() => {
                 setFullImgLoaded(true);
                 setHasFullImgError(false);
               }}
-              onError={() => {
-                if (lightboxRetry < 1) {
-                  setTimeout(() => setLightboxRetry((r) => r + 1), 1000);
-                } else {
-                  setHasFullImgError(true);
-                  setFullImgLoaded(false);
-                }
-              }}
+              onError={handleFullImgError}
               style={{
                 transform: `scale(${zoom}) rotate(${rotation}deg)`,
                 transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.3s ease-in-out',

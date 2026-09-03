@@ -6,29 +6,87 @@ export const TELEGRAM_CONFIG = {
   channelUrl: "https://t.me/+V3OkDk0rM_82MmRl",
 };
 
-// Returns a valid image URL for browser rendering across all environments
+// Memory cache for dynamic fileId -> fresh filePath
+const resolvedPathCache = new Map<string, string>();
+
+// Generates direct CDN download URL from Telegram
+export function getTelegramCdnUrl(filePath: string): string {
+  if (!filePath) return "";
+  const cleanPath = filePath.replace(/^\/+/, "");
+  return `https://api.telegram.org/file/bot${TELEGRAM_CONFIG.botToken}/${cleanPath}`;
+}
+
+// Returns a valid image URL for browser rendering across ALL environments (AI Studio, mobile, deployed site)
 export function resolveImageUrl(
   image: GalleryImage,
   variant: "thumb" | "full" = "thumb"
 ): string {
   if (!image) return "";
 
-  // Extract filePath if available for direct high-speed loading
+  // 0. Check client-side resolved cache first
+  if (image.fileId && resolvedPathCache.has(image.fileId)) {
+    return getTelegramCdnUrl(resolvedPathCache.get(image.fileId)!);
+  }
+
+  // 1. Direct Telegram CDN path (Highest speed, universally accessible on all devices, mobile browsers & static sites)
   let knownPath = image.filePath || "";
   if (!knownPath && image.directUrl && image.directUrl.includes("/photos/")) {
     const match = image.directUrl.match(/photos\/[^?&#]+/);
     if (match) knownPath = match[0];
   }
-  const pathParam = knownPath ? `&path=${encodeURIComponent(knownPath)}` : "";
-
-  if (variant === "thumb") {
-    if (image.thumbnailFileId) return `/api/telegram/image/${image.thumbnailFileId}?v=3${pathParam}`;
-    if (image.fileId) return `/api/telegram/image/${image.fileId}?v=3${pathParam}`;
-    if (image.thumbnailUrl && !image.thumbnailUrl.includes("api.telegram.org")) return image.thumbnailUrl;
+  if (knownPath) {
+    return getTelegramCdnUrl(knownPath);
   }
 
-  if (image.fileId) return `/api/telegram/image/${image.fileId}?v=3${pathParam}`;
-  return image.directUrl || "";
+  // 2. Direct HTTPS URL stored on document if valid
+  if (image.directUrl && image.directUrl.startsWith("http")) {
+    return image.directUrl;
+  }
+
+  // 3. Fallback to thumbnail URL if non-telegram
+  if (variant === "thumb" && image.thumbnailUrl && !image.thumbnailUrl.includes("api.telegram.org")) {
+    return image.thumbnailUrl;
+  }
+
+  // 4. Proxy fallback if fileId is present
+  if (image.fileId) {
+    return `/api/telegram/image/${image.fileId}`;
+  }
+
+  return "";
+}
+
+// Dynamic client-side self-healer using Telegram's public CORS-enabled Bot API
+export async function fetchFreshTelegramUrl(
+  fileId: string,
+  onResolved?: (freshPath: string, freshUrl: string) => void
+): Promise<string | null> {
+  if (!fileId) return null;
+
+  if (resolvedPathCache.has(fileId)) {
+    const p = resolvedPathCache.get(fileId)!;
+    const u = getTelegramCdnUrl(p);
+    if (onResolved) onResolved(p, u);
+    return u;
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_CONFIG.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`
+    );
+    const data = await res.json();
+    if (data.ok && data.result?.file_path) {
+      const freshPath = data.result.file_path;
+      resolvedPathCache.set(fileId, freshPath);
+      const freshUrl = getTelegramCdnUrl(freshPath);
+      if (onResolved) onResolved(freshPath, freshUrl);
+      return freshUrl;
+    }
+  } catch (err) {
+    console.warn("Direct Telegram getFile error:", err);
+  }
+
+  return null;
 }
 
 // Check Telegram Status (supports both backend proxy and direct client-side fallback)

@@ -182,11 +182,11 @@ export async function saveGalleryImage(image: GalleryImage): Promise<void> {
 // Update fields for an image
 export async function updateImageDetails(
   id: string, 
-  updates: Partial<Pick<GalleryImage, 'title' | 'caption' | 'album' | 'tags' | 'isFavorite'>>
+  updates: Partial<GalleryImage>
 ): Promise<void> {
   try {
     const docRef = doc(db, COLLECTION_NAME, id);
-    await updateDoc(docRef, updates);
+    await updateDoc(docRef, updates as any);
 
     const current = getLocalCache();
     const updated = current.map(item => item.id === id ? { ...item, ...updates } : item);
