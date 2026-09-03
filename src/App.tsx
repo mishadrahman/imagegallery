@@ -16,10 +16,15 @@ import {
   getLocalCache,
   subscribeToAlbums,
   saveAlbum,
+  auth,
 } from "./services/firebase";
 import { deleteTelegramMessage } from "./services/telegramService";
+import { AuthScreen } from "./components/AuthScreen";
+import { onAuthStateChanged, User, signOut } from "firebase/auth";
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<
     "gallery" | "upload" | "albums" | "sync"
   >("gallery");
@@ -36,6 +41,11 @@ export default function App() {
 
   // Subscribe to real-time updates from Firebase Firestore
   useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+
     setIsSyncing(true);
     const unsubscribeImages = subscribeToGalleryImages(
       (updatedImages) => {
@@ -58,6 +68,7 @@ export default function App() {
     return () => {
       unsubscribeImages();
       unsubscribeAlbums();
+      unsubscribeAuth();
     };
   }, []);
 
@@ -137,6 +148,18 @@ export default function App() {
   };
 
   const totalSize = images.reduce((sum, img) => sum + (img.fileSize || 0), 0);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen images={images} />;
+  }
 
   return (
     <div className="min-h-screen text-neutral-100 flex flex-col selection:bg-indigo-500 selection:text-white relative bg-neutral-950">

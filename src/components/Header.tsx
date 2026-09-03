@@ -1,17 +1,20 @@
-import React, { useState } from 'react';
-import { 
-  Images, 
-  UploadCloud, 
-  Layers, 
-  Cpu, 
-  Search, 
-  X, 
-  Plus
-} from 'lucide-react';
+import React, { useState } from "react";
+import {
+  Images,
+  UploadCloud,
+  Layers,
+  Cpu,
+  Search,
+  X,
+  Plus,
+  LogOut,
+} from "lucide-react";
+import { signOut } from "firebase/auth";
+import { auth } from "../services/firebase";
 
 interface HeaderProps {
-  activeTab: 'gallery' | 'upload' | 'albums' | 'sync';
-  setActiveTab: (tab: 'gallery' | 'upload' | 'albums' | 'sync') => void;
+  activeTab: "gallery" | "upload" | "albums" | "sync";
+  setActiveTab: (tab: "gallery" | "upload" | "albums" | "sync") => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   totalImages: number;
@@ -36,11 +39,10 @@ export const Header: React.FC<HeaderProps> = ({
       <header className="sticky top-0 z-30 bg-neutral-950/90 backdrop-blur-xl border-b border-neutral-800/80 transition-all">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14 sm:h-16 gap-2 sm:gap-4">
-            
             {/* Logo & Brand */}
             <div className="flex items-center gap-2.5">
-              <button 
-                onClick={() => setActiveTab('gallery')}
+              <button
+                onClick={() => setActiveTab("gallery")}
                 className="flex items-center gap-2 group text-left focus:outline-none"
               >
                 <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform duration-200">
@@ -62,11 +64,11 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Desktop Navigation Tabs (Hidden on Mobile) */}
             <nav className="hidden md:flex items-center p-1 bg-neutral-900/90 rounded-xl border border-neutral-800/80 shadow-inner">
               <button
-                onClick={() => setActiveTab('gallery')}
+                onClick={() => setActiveTab("gallery")}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  activeTab === 'gallery'
-                    ? 'bg-neutral-800 text-white shadow-sm'
-                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+                  activeTab === "gallery"
+                    ? "bg-neutral-800 text-white shadow-sm"
+                    : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40"
                 }`}
               >
                 <Images className="w-3.5 h-3.5" />
@@ -77,11 +79,11 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               <button
-                onClick={() => setActiveTab('upload')}
+                onClick={() => setActiveTab("upload")}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  activeTab === 'upload'
-                    ? 'bg-gradient-to-r from-indigo-600 to-sky-600 text-white shadow-sm shadow-indigo-600/30'
-                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+                  activeTab === "upload"
+                    ? "bg-gradient-to-r from-indigo-600 to-sky-600 text-white shadow-sm shadow-indigo-600/30"
+                    : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40"
                 }`}
               >
                 <UploadCloud className="w-3.5 h-3.5" />
@@ -89,11 +91,11 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               <button
-                onClick={() => setActiveTab('albums')}
+                onClick={() => setActiveTab("albums")}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  activeTab === 'albums'
-                    ? 'bg-neutral-800 text-white shadow-sm'
-                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+                  activeTab === "albums"
+                    ? "bg-neutral-800 text-white shadow-sm"
+                    : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40"
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
@@ -104,11 +106,11 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               <button
-                onClick={() => setActiveTab('sync')}
+                onClick={() => setActiveTab("sync")}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  activeTab === 'sync'
-                    ? 'bg-neutral-800 text-white shadow-sm'
-                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+                  activeTab === "sync"
+                    ? "bg-neutral-800 text-white shadow-sm"
+                    : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40"
                 }`}
               >
                 <Cpu className="w-3.5 h-3.5 text-sky-400" />
@@ -133,7 +135,7 @@ export const Header: React.FC<HeaderProps> = ({
                 />
                 {searchQuery && (
                   <button
-                    onClick={() => setSearchQuery('')}
+                    onClick={() => setSearchQuery("")}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-0.5"
                   >
                     <X className="w-3 h-3" />
@@ -152,14 +154,21 @@ export const Header: React.FC<HeaderProps> = ({
 
               {/* Quick Upload Action Button on Top Bar */}
               <button
-                onClick={() => setActiveTab('upload')}
+                onClick={() => setActiveTab("upload")}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-sky-600 text-white text-xs font-semibold shadow-md shadow-indigo-600/30 hover:opacity-90 transition-opacity"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Upload</span>
               </button>
+              <button
+                onClick={() => signOut(auth)}
+                className="p-1.5 rounded-xl bg-neutral-900 border border-neutral-800 text-red-400 hover:text-red-300 hover:bg-neutral-800"
+                aria-label="Log Out"
+                title="Log Out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
             </div>
-
           </div>
 
           {/* Mobile Collapsible Search Bar */}
@@ -177,7 +186,7 @@ export const Header: React.FC<HeaderProps> = ({
                 />
                 {searchQuery && (
                   <button
-                    onClick={() => setSearchQuery('')}
+                    onClick={() => setSearchQuery("")}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 p-1"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -192,13 +201,12 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Mobile Sticky Bottom Navigation Bar (thumb friendly) */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-neutral-950/95 backdrop-blur-xl border-t border-neutral-800/90 px-3 py-2">
         <div className="grid grid-cols-4 gap-1">
-          
           <button
-            onClick={() => setActiveTab('gallery')}
+            onClick={() => setActiveTab("gallery")}
             className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-xl transition-all ${
-              activeTab === 'gallery'
-                ? 'text-indigo-400 bg-neutral-900/80 font-semibold'
-                : 'text-neutral-400 hover:text-neutral-200'
+              activeTab === "gallery"
+                ? "text-indigo-400 bg-neutral-900/80 font-semibold"
+                : "text-neutral-400 hover:text-neutral-200"
             }`}
           >
             <div className="relative">
@@ -213,11 +221,11 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           <button
-            onClick={() => setActiveTab('upload')}
+            onClick={() => setActiveTab("upload")}
             className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-xl transition-all ${
-              activeTab === 'upload'
-                ? 'text-sky-400 bg-neutral-900/80 font-semibold'
-                : 'text-neutral-400 hover:text-neutral-200'
+              activeTab === "upload"
+                ? "text-sky-400 bg-neutral-900/80 font-semibold"
+                : "text-neutral-400 hover:text-neutral-200"
             }`}
           >
             <UploadCloud className="w-5 h-5" />
@@ -225,11 +233,11 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           <button
-            onClick={() => setActiveTab('albums')}
+            onClick={() => setActiveTab("albums")}
             className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-xl transition-all ${
-              activeTab === 'albums'
-                ? 'text-indigo-400 bg-neutral-900/80 font-semibold'
-                : 'text-neutral-400 hover:text-neutral-200'
+              activeTab === "albums"
+                ? "text-indigo-400 bg-neutral-900/80 font-semibold"
+                : "text-neutral-400 hover:text-neutral-200"
             }`}
           >
             <Layers className="w-5 h-5" />
@@ -237,11 +245,11 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           <button
-            onClick={() => setActiveTab('sync')}
+            onClick={() => setActiveTab("sync")}
             className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-xl transition-all ${
-              activeTab === 'sync'
-                ? 'text-emerald-400 bg-neutral-900/80 font-semibold'
-                : 'text-neutral-400 hover:text-neutral-200'
+              activeTab === "sync"
+                ? "text-emerald-400 bg-neutral-900/80 font-semibold"
+                : "text-neutral-400 hover:text-neutral-200"
             }`}
           >
             <div className="relative">
@@ -252,7 +260,6 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             <span className="text-[10px] mt-1">Status</span>
           </button>
-
         </div>
       </nav>
     </>

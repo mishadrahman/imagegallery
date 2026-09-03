@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
 import { 
   getFirestore, 
   collection, 
@@ -27,6 +28,7 @@ export const firebaseConfig = {
 
 // Initialize Firebase App singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+export const auth = getAuth(app);
 export const db = getFirestore(app);
 
 const COLLECTION_NAME = 'gallery_images';
