@@ -12,7 +12,8 @@ import {
   CheckSquare, 
   Square, 
   Sparkles,
-  Info
+  Info,
+  RefreshCw
 } from 'lucide-react';
 import { GalleryImage, ViewMode, SortOption } from '../types';
 import { resolveImageUrl } from '../services/telegramService';
@@ -474,6 +475,39 @@ const ImageCard: React.FC<CardProps> = ({
 }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  // Auto-retry up to 2 times on initial failure (e.g. momentary 4G cellular stutter)
+  const handleImageError = () => {
+    if (retryCount < 2) {
+      setTimeout(() => {
+        setRetryCount((prev) => prev + 1);
+      }, 1200);
+    } else {
+      setHasError(true);
+      setImgLoaded(false);
+    }
+  };
+
+  const handleManualRetry = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsRetrying(true);
+    setHasError(false);
+    setImgLoaded(false);
+    setRetryCount((prev) => prev + 1);
+    setTimeout(() => setIsRetrying(false), 600);
+  };
+
+  const currentSrc = useMemo(() => {
+    const base = resolveImageUrl(image, 'thumb');
+    if (!base) return '';
+    if (retryCount > 0) {
+      const sep = base.includes('?') ? '&' : '?';
+      return `${base}${sep}r=${retryCount}`;
+    }
+    return base;
+  }, [image, retryCount]);
 
   return (
     <div
@@ -507,25 +541,34 @@ const ImageCard: React.FC<CardProps> = ({
 
       {/* Main Image (Uses lightweight thumbnail for fast grid browsing) */}
       <img
-        src={resolveImageUrl(image, 'thumb')}
+        src={currentSrc}
         alt={image.title}
         loading="lazy"
-        referrerPolicy="no-referrer"
-        onLoad={() => setImgLoaded(true)}
-        onError={() => {
-          setHasError(true);
+        onLoad={() => {
           setImgLoaded(true);
+          setHasError(false);
         }}
+        onError={handleImageError}
         className={`w-full object-cover transition-all duration-300 group-hover:scale-105 ${
           isAspectSquare ? 'h-full' : 'h-auto max-h-[500px]'
-        } ${imgLoaded ? 'opacity-100' : 'opacity-0'}`}
+        } ${imgLoaded && !hasError ? 'opacity-100' : 'opacity-0 absolute pointer-events-none'}`}
       />
 
-      {/* Error Fallback */}
+      {/* Error Fallback with Retry */}
       {hasError && (
-        <div className="p-6 text-center bg-neutral-900 flex flex-col items-center justify-center min-h-[140px]">
-          <Info className="w-5 h-5 text-neutral-500 mb-1.5" />
-          <p className="text-[11px] text-neutral-400">Preview pending</p>
+        <div className="p-5 text-center bg-neutral-900/95 flex flex-col items-center justify-center min-h-[150px] space-y-2">
+          <Info className="w-5 h-5 text-amber-500 mb-0.5" />
+          <p className="text-xs font-semibold text-neutral-200">ছবি লোড হতে পারেনি</p>
+          <p className="text-[10px] text-neutral-400">Preview pending (Check Internet)</p>
+          <button
+            type="button"
+            onClick={handleManualRetry}
+            disabled={isRetrying}
+            className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-[11px] font-semibold transition-all shadow-md shadow-indigo-600/30 cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRetrying ? 'animate-spin' : ''}`} />
+            <span>আবার চেষ্টা করুন (Retry)</span>
+          </button>
         </div>
       )}
 
@@ -615,6 +658,14 @@ const CompactImageRow: React.FC<CardProps> = ({
   onDelete,
   formatFileSize,
 }) => {
+  const [hasError, setHasError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+
+  const imgSrc = useMemo(() => {
+    const base = resolveImageUrl(image, 'thumb');
+    return retryCount > 0 ? `${base}${base.includes('?') ? '&' : '?'}r=${retryCount}` : base;
+  }, [image, retryCount]);
+
   return (
     <div
       onClick={isSelectMode ? onSelect : onClick}
@@ -635,13 +686,34 @@ const CompactImageRow: React.FC<CardProps> = ({
           </div>
         )}
 
-        <img
-          src={resolveImageUrl(image, 'thumb')}
-          alt={image.title}
-          className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl object-cover border border-neutral-800 shrink-0"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-        />
+        {hasError ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setHasError(false);
+              setRetryCount((c) => c + 1);
+            }}
+            className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-neutral-800/90 border border-neutral-700 flex items-center justify-center shrink-0 text-neutral-400 hover:text-white transition-colors cursor-pointer"
+            title="Click to retry"
+          >
+            <RefreshCw className="w-4 h-4 text-amber-500" />
+          </button>
+        ) : (
+          <img
+            src={imgSrc}
+            alt={image.title}
+            className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl object-cover border border-neutral-800 shrink-0"
+            loading="lazy"
+            onError={() => {
+              if (retryCount < 1) {
+                setTimeout(() => setRetryCount((c) => c + 1), 1000);
+              } else {
+                setHasError(true);
+              }
+            }}
+          />
+        )}
 
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">

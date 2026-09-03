@@ -18,7 +18,7 @@ const CHANNEL_URL = process.env.TELEGRAM_CHANNEL_URL || "https://t.me/+V3OkDk0rM
 
 // In-memory cache for telegram file_id -> file_path
 const filePathCache = new Map<string, { path: string; fetchedAt: number }>();
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // Multer memory storage for direct streaming to Telegram
 const upload = multer({
@@ -29,22 +29,63 @@ const upload = multer({
   },
 });
 
-// Helper to resolve Telegram file_id to file_path
-async function resolveTelegramFilePath(fileId: string): Promise<string | null> {
+// Deduplicate concurrent getFile requests for the same fileId
+const pendingFetches = new Map<string, Promise<any>>();
+
+async function fetchGetFileWithDeduplication(fileId: string): Promise<any> {
+  if (pendingFetches.has(fileId)) {
+    return pendingFetches.get(fileId);
+  }
+
+  const promise = (async () => {
+    let attempts = 0;
+    while (attempts < 3) {
+      attempts++;
+      try {
+        const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
+        if (res.status === 429) {
+          const data: any = await res.json().catch(() => ({}));
+          const retryAfter = data.parameters?.retry_after || 1;
+          await new Promise(r => setTimeout(r, retryAfter * 1000));
+          continue;
+        }
+        const data = await res.json();
+        return data;
+      } catch (err) {
+        console.error("Telegram getFile error:", err);
+        await new Promise(r => setTimeout(r, 400));
+      }
+    }
+    return { ok: false, error: "Max retries exceeded" };
+  })();
+
+  pendingFetches.set(fileId, promise);
+  try {
+    return await promise;
+  } finally {
+    pendingFetches.delete(fileId);
+  }
+}
+
+async function resolveTelegramFilePath(fileId: string, knownPath?: string): Promise<string | null> {
+  if (knownPath && knownPath.startsWith("photos/")) {
+    filePathCache.set(fileId, { path: knownPath, fetchedAt: Date.now() });
+    return knownPath;
+  }
+
   const cached = filePathCache.get(fileId);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     return cached.path;
   }
 
   try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
-    const data: any = await res.json();
-    if (data.ok && data.result?.file_path) {
+    const data: any = await fetchGetFileWithDeduplication(fileId);
+    if (data && data.ok && data.result?.file_path) {
       const p = data.result.file_path;
       filePathCache.set(fileId, { path: p, fetchedAt: Date.now() });
       return p;
     }
-    console.error("Telegram getFile error response:", data);
+    console.error("Telegram getFile error response for fileId:", fileId, data);
     return null;
   } catch (err) {
     console.error("Failed to fetch getFile from Telegram:", err);
@@ -199,18 +240,30 @@ app.post("/api/upload-single", upload.single("image"), async (req, res) => {
 // 3. Direct Permanent Image Proxy Streamer
 app.get("/api/telegram/image/:fileId", async (req, res) => {
   const { fileId } = req.params;
-  if (!fileId) {
-    return res.status(400).send("Missing file_id");
+  if (!fileId || fileId === "undefined") {
+    return res.status(400).send("Invalid file ID");
   }
 
+  const queryPath = (req.query.path as string) || undefined;
+
   try {
-    const filePath = await resolveTelegramFilePath(fileId);
+    let filePath = await resolveTelegramFilePath(fileId, queryPath);
     if (!filePath) {
       return res.status(404).send("Image not found on Telegram");
     }
 
-    const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
-    const imgRes = await fetch(downloadUrl);
+    let downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+    let imgRes = await fetch(downloadUrl);
+
+    // If initial filePath failed with 404/403 (expired cache or invalid path), re-resolve from Telegram!
+    if (!imgRes.ok && (imgRes.status === 404 || imgRes.status === 400)) {
+      filePathCache.delete(fileId);
+      filePath = await resolveTelegramFilePath(fileId);
+      if (filePath) {
+        downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+        imgRes = await fetch(downloadUrl);
+      }
+    }
 
     if (!imgRes.ok) {
       console.error(`Failed to download from telegram: ${imgRes.status} ${imgRes.statusText}`);
@@ -225,21 +278,18 @@ app.get("/api/telegram/image/:fileId", async (req, res) => {
       else if (ext === ".webp") contentType = "image/webp";
       else if (ext === ".gif") contentType = "image/gif";
       else if (ext === ".svg") contentType = "image/svg+xml";
-      else if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
       else contentType = "image/jpeg";
     }
 
-    // Set cache headers for fast browser rendering
+    // Set cache headers and CORS for fast browser rendering
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     res.setHeader("Content-Type", contentType);
-    const contentLength = imgRes.headers.get("content-length");
-    if (contentLength) {
-      res.setHeader("Content-Length", contentLength);
-    }
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
 
-    // Stream the body to client
     const arrayBuffer = await imgRes.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+    res.setHeader("Content-Length", buffer.length);
     res.end(buffer);
   } catch (err: any) {
     console.error("Proxy image error:", err);

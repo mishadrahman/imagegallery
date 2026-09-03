@@ -9,16 +9,25 @@ export const TELEGRAM_CONFIG = {
 // Returns a valid image URL for browser rendering across all environments
 export function resolveImageUrl(
   image: GalleryImage,
-  variant: "thumb" | "full" = "thumb",
+  variant: "thumb" | "full" = "thumb"
 ): string {
+  if (!image) return "";
+
+  // Extract filePath if available for direct high-speed loading
+  let knownPath = image.filePath || "";
+  if (!knownPath && image.directUrl && image.directUrl.includes("/photos/")) {
+    const match = image.directUrl.match(/photos\/[^?&#]+/);
+    if (match) knownPath = match[0];
+  }
+  const pathParam = knownPath ? `&path=${encodeURIComponent(knownPath)}` : "";
+
   if (variant === "thumb") {
-    if (image.thumbnailFileId)
-      return `/api/telegram/image/${image.thumbnailFileId}`;
-    if (image.thumbnailUrl && !image.thumbnailUrl.includes("api.telegram.org"))
-      return image.thumbnailUrl;
+    if (image.thumbnailFileId) return `/api/telegram/image/${image.thumbnailFileId}?v=3${pathParam}`;
+    if (image.fileId) return `/api/telegram/image/${image.fileId}?v=3${pathParam}`;
+    if (image.thumbnailUrl && !image.thumbnailUrl.includes("api.telegram.org")) return image.thumbnailUrl;
   }
 
-  if (image.fileId) return `/api/telegram/image/${image.fileId}`;
+  if (image.fileId) return `/api/telegram/image/${image.fileId}?v=3${pathParam}`;
   return image.directUrl || "";
 }
 
@@ -215,10 +224,10 @@ export async function uploadImageToTelegram(
     tags: meta.tags,
     fileId,
     fileUniqueId,
-    filePath: filePath || "",
+    filePath: "",
     directUrl,
     thumbnailUrl,
-    thumbnailFilePath: thumbnailFilePath || undefined,
+    thumbnailFilePath: undefined,
     thumbnailFileId: thumbnailFileId || undefined,
     telegramMessageId: messageId,
     channelUrl: TELEGRAM_CONFIG.channelUrl,

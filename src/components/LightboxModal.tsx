@@ -18,7 +18,8 @@ import {
   Check, 
   Calendar, 
   Tag, 
-  Folder
+  Folder,
+  RefreshCw
 } from 'lucide-react';
 import { GalleryImage } from '../types';
 import { updateImageDetails, saveAlbum } from '../services/firebase';
@@ -54,6 +55,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [copiedFileId, setCopiedFileId] = useState<boolean>(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
   const [fullImgLoaded, setFullImgLoaded] = useState<boolean>(false);
+  const [hasFullImgError, setHasFullImgError] = useState<boolean>(false);
+  const [lightboxRetry, setLightboxRetry] = useState<number>(0);
 
   // Touch swipe state for mobile
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
@@ -76,6 +79,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       setZoom(1);
       setRotation(0);
       setFullImgLoaded(false);
+      setHasFullImgError(false);
+      setLightboxRetry(0);
     }
   }, [currentIndex, currentImage]);
 
@@ -410,7 +415,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
         {/* Displayed Image with Progressive Blur-Up */}
         <div className="relative max-w-full max-h-full flex items-center justify-center overflow-hidden">
-          {!fullImgLoaded && (currentImage.microThumbnail || currentImage.thumbnailUrl) && (
+          {!fullImgLoaded && !hasFullImgError && (currentImage.microThumbnail || currentImage.thumbnailUrl) && (
             <img
               src={currentImage.microThumbnail || currentImage.thumbnailUrl}
               alt=""
@@ -419,19 +424,52 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             />
           )}
 
-          <img
-            src={resolveImageUrl(currentImage, 'full')}
-            alt={currentImage.title}
-            referrerPolicy="no-referrer"
-            onLoad={() => setFullImgLoaded(true)}
-            style={{
-              transform: `scale(${zoom}) rotate(${rotation}deg)`,
-              transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.3s ease-in-out',
-            }}
-            className={`max-h-[80vh] sm:max-h-[85vh] max-w-[95vw] sm:max-w-[88vw] object-contain rounded-xl shadow-2xl drop-shadow-2xl ${
-              fullImgLoaded ? 'opacity-100' : 'opacity-0'
-            }`}
-          />
+          {hasFullImgError ? (
+            <div className="p-8 text-center bg-neutral-900/90 rounded-2xl border border-neutral-800 flex flex-col items-center justify-center space-y-3 max-w-sm">
+              <Info className="w-8 h-8 text-amber-500" />
+              <p className="text-sm font-semibold text-neutral-200">মূল ছবিটি লোড হতে পারেনি</p>
+              <p className="text-xs text-neutral-400">মোবাইল ডাটা ধীরগতি বা সংযোগে সাময়িক ত্রুটি থাকতে পারে</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setHasFullImgError(false);
+                  setFullImgLoaded(false);
+                  setLightboxRetry((r) => r + 1);
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 cursor-pointer"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>পুনরায় চেষ্টা করুন (Retry)</span>
+              </button>
+            </div>
+          ) : (
+            <img
+              src={(() => {
+                const base = resolveImageUrl(currentImage, 'full');
+                return lightboxRetry > 0 ? `${base}${base.includes('?') ? '&' : '?'}r=${lightboxRetry}` : base;
+              })()}
+              alt={currentImage.title}
+              onLoad={() => {
+                setFullImgLoaded(true);
+                setHasFullImgError(false);
+              }}
+              onError={() => {
+                if (lightboxRetry < 1) {
+                  setTimeout(() => setLightboxRetry((r) => r + 1), 1000);
+                } else {
+                  setHasFullImgError(true);
+                  setFullImgLoaded(false);
+                }
+              }}
+              style={{
+                transform: `scale(${zoom}) rotate(${rotation}deg)`,
+                transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.3s ease-in-out',
+              }}
+              className={`max-h-[80vh] sm:max-h-[85vh] max-w-[95vw] sm:max-w-[88vw] object-contain rounded-xl shadow-2xl drop-shadow-2xl ${
+                fullImgLoaded && !hasFullImgError ? 'opacity-100' : 'opacity-0'
+              }`}
+            />
+          )}
         </div>
 
       </div>
