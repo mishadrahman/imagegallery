@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Header } from "./components/Header";
 import { GalleryView } from "./components/GalleryView";
 import { BulkUploadStudio } from "./components/BulkUploadStudio";
@@ -14,13 +14,14 @@ import {
   deleteGalleryImage,
   batchDeleteGalleryImages,
   getLocalCache,
+  getLockedAlbumsCache,
   subscribeToAlbums,
-  saveAlbum,
+  setAlbumLock,
+  removeAlbumLock,
   auth,
 } from "./services/firebase";
-import { deleteTelegramMessage } from "./services/telegramService";
 import { AuthScreen } from "./components/AuthScreen";
-import { onAuthStateChanged, User, signOut } from "firebase/auth";
+import { onAuthStateChanged, User } from "firebase/auth";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -31,6 +32,12 @@ export default function App() {
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [images, setImages] = useState<GalleryImage[]>(() => getLocalCache());
   const [persistentAlbums, setPersistentAlbums] = useState<string[]>([]);
+  const [lockedAlbums, setLockedAlbums] = useState<Record<string, string>>(() =>
+    getLockedAlbumsCache()
+  );
+  const [unlockedInSession, setUnlockedInSession] = useState<Set<string>>(
+    new Set()
+  );
   const [selectedAlbum, setSelectedAlbum] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isSyncing, setIsSyncing] = useState<boolean>(true);
@@ -38,6 +45,7 @@ export default function App() {
   // Lightbox modal state
   const [lightboxOpen, setLightboxOpen] = useState<boolean>(false);
   const [lightboxIndex, setLightboxIndex] = useState<number>(0);
+  const [lightboxList, setLightboxList] = useState<GalleryImage[]>([]);
 
   // Subscribe to real-time updates from Firebase Firestore
   useEffect(() => {
@@ -55,15 +63,18 @@ export default function App() {
       (err) => {
         console.warn(
           "Firestore sync error, running with local cache fallback:",
-          err,
+          err
         );
         setIsSyncing(false);
-      },
+      }
     );
 
-    const unsubscribeAlbums = subscribeToAlbums((updatedAlbums) => {
-      setPersistentAlbums(updatedAlbums);
-    });
+    const unsubscribeAlbums = subscribeToAlbums(
+      (updatedAlbums, updatedLockedMap) => {
+        setPersistentAlbums(updatedAlbums);
+        setLockedAlbums(updatedLockedMap);
+      }
+    );
 
     return () => {
       unsubscribeImages();
@@ -72,19 +83,108 @@ export default function App() {
     };
   }, []);
 
+  // Compute public images (excluding any image in a locked album)
+  const publicImages = useMemo(() => {
+    return images.filter((img) => {
+      const albKey = (img.album || "").trim().toLowerCase();
+      return !(albKey && lockedAlbums[albKey]);
+    });
+  }, [images, lockedAlbums]);
+
   // Compute unique albums
-  const existingAlbums = Array.from(
-    new Set([
-      ...persistentAlbums,
-      ...images.map((img) => img.album).filter(Boolean),
-    ]),
-  ).sort();
+  const existingAlbums = useMemo(() => {
+    return Array.from(
+      new Set([
+        ...persistentAlbums,
+        ...images.map((img) => img.album).filter(Boolean),
+      ])
+    ).sort();
+  }, [persistentAlbums, images]);
+
   const totalAlbums = existingAlbums.length || 1;
 
+  // Album selection handler that auto-relocks when navigating away from a locked album
+  const handleSelectAlbum = (albumName: string) => {
+    const nextKey = albumName.trim().toLowerCase();
+    setUnlockedInSession((prev) => {
+      // Keep only the target album unlocked if we are entering it; otherwise relock all
+      if (lockedAlbums[nextKey] && prev.has(nextKey)) {
+        return new Set([nextKey]);
+      }
+      return new Set();
+    });
+    setSelectedAlbum(albumName);
+  };
+
+  const handleTabChange = (tab: "gallery" | "upload" | "albums" | "sync") => {
+    if (tab !== "gallery") {
+      // Auto-lock any unlocked album when leaving gallery tab for maximum privacy
+      setUnlockedInSession(new Set());
+      if (
+        selectedAlbum !== "all" &&
+        selectedAlbum !== "favorites" &&
+        lockedAlbums[selectedAlbum.trim().toLowerCase()]
+      ) {
+        setSelectedAlbum("all");
+      }
+    }
+    setActiveTab(tab);
+  };
+
+  // Lock & Unlock Handlers
+  const handleLockAlbum = async (albumName: string, password: string) => {
+    const hash = await setAlbumLock(albumName, password);
+    const key = albumName.trim().toLowerCase();
+    setLockedAlbums((prev) => ({ ...prev, [key]: hash }));
+    // Lock it immediately and return to All Photos if we were inside it
+    setUnlockedInSession((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    if (selectedAlbum.trim().toLowerCase() === key) {
+      setSelectedAlbum("all");
+    }
+  };
+
+  const handleUnlockAlbumPermanently = async (albumName: string) => {
+    await removeAlbumLock(albumName);
+    const key = albumName.trim().toLowerCase();
+    setLockedAlbums((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setUnlockedInSession((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
+
+  const handleUnlockAlbumSession = (albumName: string) => {
+    const key = albumName.trim().toLowerCase();
+    setUnlockedInSession(new Set([key]));
+  };
+
+  const handleRelockAlbumSession = (albumName: string) => {
+    const key = albumName.trim().toLowerCase();
+    setUnlockedInSession((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
+
   // Handlers
-  const handleOpenLightbox = (image: GalleryImage, index: number) => {
-    // Determine the index in the current images array
-    const realIndex = images.findIndex((i) => i.id === image.id);
+  const handleOpenLightbox = (
+    image: GalleryImage,
+    index: number,
+    currentList: GalleryImage[]
+  ) => {
+    const listToUse = currentList.length > 0 ? currentList : publicImages;
+    const realIndex = listToUse.findIndex((i) => i.id === image.id);
+    setLightboxList(listToUse);
     setLightboxIndex(realIndex >= 0 ? realIndex : index);
     setLightboxOpen(true);
   };
@@ -94,8 +194,13 @@ export default function App() {
       await updateImageDetails(id, { isFavorite: !current });
       setImages((prev) =>
         prev.map((img) =>
-          img.id === id ? { ...img, isFavorite: !current } : img,
-        ),
+          img.id === id ? { ...img, isFavorite: !current } : img
+        )
+      );
+      setLightboxList((prev) =>
+        prev.map((img) =>
+          img.id === id ? { ...img, isFavorite: !current } : img
+        )
       );
     } catch (err) {
       console.error("Failed to toggle favorite:", err);
@@ -104,10 +209,8 @@ export default function App() {
 
   const handleDeleteImage = async (id: string) => {
     try {
-      // Optimistically update UI and local state immediately
       setImages((prev) => prev.filter((img) => img.id !== id));
-
-      // Delete from Firestore & local storage (Telegram media remains safe in channel)
+      setLightboxList((prev) => prev.filter((img) => img.id !== id));
       await deleteGalleryImage(id);
     } catch (err) {
       console.error("Failed to delete image from Firebase:", err);
@@ -117,11 +220,8 @@ export default function App() {
   const handleBatchDelete = async (ids: string[]) => {
     try {
       const idSet = new Set(ids);
-
-      // Optimistically update UI and local state immediately
       setImages((prev) => prev.filter((img) => !idSet.has(img.id)));
-
-      // Delete in batch from Firestore & local storage (Telegram media remains safe in channel)
+      setLightboxList((prev) => prev.filter((img) => !idSet.has(img.id)));
       await batchDeleteGalleryImages(ids);
     } catch (err) {
       console.error("Failed to batch delete images from Firebase:", err);
@@ -134,16 +234,22 @@ export default function App() {
       const filteredNew = newImages.filter((i) => !existingIds.has(i.id));
       return [...filteredNew, ...prev];
     });
-    // Switch to gallery view to preview the new photos
     setActiveTab("gallery");
   };
 
   const handleSelectAlbumFromView = (albumName: string) => {
+    handleSelectAlbum(albumName);
+    setActiveTab("gallery");
+  };
+
+  const handleOpenLockedAlbumFromView = (albumName: string) => {
+    const key = albumName.trim().toLowerCase();
+    setUnlockedInSession(new Set([key]));
     setSelectedAlbum(albumName);
     setActiveTab("gallery");
   };
 
-  const handleSwitchToUploadWithAlbum = (albumName?: string) => {
+  const handleSwitchToUploadWithAlbum = () => {
     setActiveTab("upload");
   };
 
@@ -158,7 +264,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <AuthScreen images={images} />;
+    return <AuthScreen images={publicImages} />;
   }
 
   return (
@@ -166,7 +272,7 @@ export default function App() {
       <AnimatePresence>
         {showSplash && (
           <LoadingSplash
-            images={images}
+            images={publicImages}
             onComplete={() => setShowSplash(false)}
           />
         )}
@@ -176,10 +282,10 @@ export default function App() {
         {/* Top Header Navigation */}
         <Header
           activeTab={activeTab}
-          setActiveTab={setActiveTab}
+          setActiveTab={handleTabChange}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
-          totalImages={images.length}
+          totalImages={publicImages.length}
           totalAlbums={totalAlbums}
           isSyncing={isSyncing}
         />
@@ -189,14 +295,21 @@ export default function App() {
           {activeTab === "gallery" && (
             <GalleryView
               images={images}
+              existingAlbums={existingAlbums}
+              lockedAlbums={lockedAlbums}
+              unlockedInSession={unlockedInSession}
               selectedAlbum={selectedAlbum}
-              setSelectedAlbum={setSelectedAlbum}
+              setSelectedAlbum={handleSelectAlbum}
+              onUnlockAlbumSession={handleUnlockAlbumSession}
+              onRelockAlbumSession={handleRelockAlbumSession}
+              onLockAlbum={handleLockAlbum}
+              onUnlockAlbumPermanently={handleUnlockAlbumPermanently}
               onOpenLightbox={handleOpenLightbox}
               onToggleFavorite={handleToggleFavorite}
               onDeleteImage={handleDeleteImage}
               onBatchDelete={handleBatchDelete}
               searchQuery={searchQuery}
-              onSwitchToUpload={() => setActiveTab("upload")}
+              onSwitchToUpload={() => handleTabChange("upload")}
             />
           )}
 
@@ -204,7 +317,7 @@ export default function App() {
             <BulkUploadStudio
               existingAlbums={existingAlbums}
               onUploadSuccess={handleUploadSuccess}
-              onGoToGallery={() => setActiveTab("gallery")}
+              onGoToGallery={() => handleTabChange("gallery")}
             />
           )}
 
@@ -212,7 +325,11 @@ export default function App() {
             <AlbumsView
               images={images}
               existingAlbums={existingAlbums}
+              lockedAlbums={lockedAlbums}
               onSelectAlbum={handleSelectAlbumFromView}
+              onOpenLockedAlbum={handleOpenLockedAlbumFromView}
+              onLockAlbum={handleLockAlbum}
+              onUnlockAlbumPermanently={handleUnlockAlbumPermanently}
               onSwitchToUpload={handleSwitchToUploadWithAlbum}
             />
           )}
@@ -222,10 +339,10 @@ export default function App() {
           )}
         </main>
 
-        {/* Lightbox / Fullscreen Viewer */}
-        {lightboxOpen && images.length > 0 && (
+        {/* Lightbox / Fullscreen Viewer (Scoped strictly to active visible list) */}
+        {lightboxOpen && lightboxList.length > 0 && (
           <LightboxModal
-            images={images}
+            images={lightboxList}
             currentIndex={lightboxIndex}
             onClose={() => setLightboxOpen(false)}
             onChangeIndex={(idx) => setLightboxIndex(idx)}
@@ -243,7 +360,7 @@ export default function App() {
             </p>
             <div className="flex items-center gap-4 text-neutral-400">
               <button
-                onClick={() => setActiveTab("sync")}
+                onClick={() => handleTabChange("sync")}
                 className="hover:text-indigo-400 transition-colors"
               >
                 Storage Status

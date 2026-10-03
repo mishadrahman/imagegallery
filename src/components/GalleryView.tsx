@@ -13,18 +13,30 @@ import {
   Square, 
   Sparkles,
   Info,
-  RefreshCw
+  RefreshCw,
+  Lock,
+  Unlock,
+  KeyRound,
+  ShieldCheck
 } from 'lucide-react';
 import { GalleryImage, ViewMode, SortOption } from '../types';
 import { resolveImageUrl, fetchFreshTelegramUrl } from '../services/telegramService';
 import { updateImageDetails } from '../services/firebase';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { AlbumLockModal, AlbumLockModalMode } from './AlbumLockModal';
 
 interface GalleryViewProps {
   images: GalleryImage[];
+  existingAlbums: string[];
+  lockedAlbums: Record<string, string>;
+  unlockedInSession: Set<string>;
   selectedAlbum: string;
   setSelectedAlbum: (album: string) => void;
-  onOpenLightbox: (image: GalleryImage, index: number) => void;
+  onUnlockAlbumSession: (album: string) => void;
+  onRelockAlbumSession: (album: string) => void;
+  onLockAlbum: (albumName: string, password: string) => Promise<void>;
+  onUnlockAlbumPermanently: (albumName: string) => Promise<void>;
+  onOpenLightbox: (image: GalleryImage, index: number, currentList: GalleryImage[]) => void;
   onToggleFavorite: (id: string, current: boolean) => void;
   onDeleteImage: (id: string, tgMessageId?: number) => void;
   onBatchDelete: (ids: string[]) => void;
@@ -34,8 +46,15 @@ interface GalleryViewProps {
 
 export const GalleryView: React.FC<GalleryViewProps> = ({
   images,
+  existingAlbums,
+  lockedAlbums,
+  unlockedInSession,
   selectedAlbum,
   setSelectedAlbum,
+  onUnlockAlbumSession,
+  onRelockAlbumSession,
+  onLockAlbum,
+  onUnlockAlbumPermanently,
   onOpenLightbox,
   onToggleFavorite,
   onDeleteImage,
@@ -52,24 +71,55 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
   const [deleteModalOpen, setDeleteModalOpen] = useState<boolean>(false);
   const [imagesToDelete, setImagesToDelete] = useState<GalleryImage[]>([]);
 
+  // Lock modal state inside GalleryView
+  const [lockModalOpen, setLockModalOpen] = useState<boolean>(false);
+  const [lockModalMode, setLockModalMode] = useState<AlbumLockModalMode>('unlock');
+  const [targetLockAlbum, setTargetLockAlbum] = useState<string>('');
+
+  const isAlbumLocked = (alb?: string): boolean => {
+    if (!alb) return false;
+    return Boolean(lockedAlbums[alb.trim().toLowerCase()]);
+  };
+
+  const isAlbumUnlockedInSession = (alb?: string): boolean => {
+    if (!alb) return true;
+    const key = alb.trim().toLowerCase();
+    if (!lockedAlbums[key]) return true;
+    return unlockedInSession.has(key);
+  };
+
+  // Public images exclude any image belonging to a locked album
+  const publicImages = useMemo(() => {
+    return images.filter((img) => !isAlbumLocked(img.album));
+  }, [images, lockedAlbums]);
+
   // Extract all unique albums
   const albumList = useMemo(() => {
-    const set = new Set<string>();
+    const set = new Set<string>(existingAlbums);
     images.forEach(img => {
       if (img.album) set.add(img.album);
     });
-    return Array.from(set);
-  }, [images]);
+    return Array.from(set).sort();
+  }, [images, existingAlbums]);
 
   // Filter & Sort
   const filteredImages = useMemo(() => {
-    let result = [...images];
+    let result: GalleryImage[] = [];
 
-    // Filter by album
-    if (selectedAlbum === 'favorites') {
-      result = result.filter(img => img.isFavorite);
-    } else if (selectedAlbum !== 'all') {
-      result = result.filter(img => img.album?.toLowerCase() === selectedAlbum.toLowerCase());
+    // Filter by album with strict privacy enforcement
+    if (selectedAlbum === 'all') {
+      // Never show locked album images in "All Photos"
+      result = [...publicImages];
+    } else if (selectedAlbum === 'favorites') {
+      // Never show locked album images in "Favorites"
+      result = publicImages.filter(img => img.isFavorite);
+    } else {
+      const albKey = selectedAlbum.trim().toLowerCase();
+      // If this album is locked and not unlocked in session, return empty array
+      if (lockedAlbums[albKey] && !unlockedInSession.has(albKey)) {
+        return [];
+      }
+      result = images.filter(img => img.album?.trim().toLowerCase() === albKey);
     }
 
     // Filter by search query
@@ -95,7 +145,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
     }
 
     return result;
-  }, [images, selectedAlbum, searchQuery, sortOption]);
+  }, [images, publicImages, lockedAlbums, unlockedInSession, selectedAlbum, searchQuery, sortOption]);
 
   // Paginated batch slice for high performance & low MB consumption
   const visibleImages = useMemo(() => {
@@ -179,18 +229,18 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none no-scrollbar">
           <button
             onClick={() => setSelectedAlbum('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all shrink-0 ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all shrink-0 cursor-pointer ${
               selectedAlbum === 'all'
                 ? 'bg-neutral-100 text-neutral-950 shadow-md font-semibold'
                 : 'bg-neutral-800/80 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'
             }`}
           >
-            All Photos ({images.length})
+            All Photos ({publicImages.length})
           </button>
 
           <button
             onClick={() => setSelectedAlbum('favorites')}
-            className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all shrink-0 ${
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all shrink-0 cursor-pointer ${
               selectedAlbum === 'favorites'
                 ? 'bg-rose-500 text-white shadow-md font-semibold'
                 : 'bg-neutral-800/80 text-rose-300 hover:text-rose-200 hover:bg-rose-950/40'
@@ -199,26 +249,53 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
             <Heart className="w-3.5 h-3.5 fill-rose-500 text-rose-500" />
             <span>Favorites</span>
             <span className="text-[10px] opacity-80">
-              ({images.filter(i => i.isFavorite).length})
+              ({publicImages.filter(i => i.isFavorite).length})
             </span>
           </button>
 
           {albumList.map((alb) => {
-            const count = images.filter(i => i.album?.toLowerCase() === alb.toLowerCase()).length;
-            const isCurrent = selectedAlbum.toLowerCase() === alb.toLowerCase();
+            const count = images.filter(i => i.album?.trim().toLowerCase() === alb.trim().toLowerCase()).length;
+            const isCurrent = selectedAlbum.trim().toLowerCase() === alb.trim().toLowerCase();
+            const locked = isAlbumLocked(alb);
+            const unlockedNow = isAlbumUnlockedInSession(alb);
+
             return (
               <button
                 key={alb}
-                onClick={() => setSelectedAlbum(alb)}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all shrink-0 ${
+                onClick={() => {
+                  if (locked && !unlockedNow) {
+                    setTargetLockAlbum(alb);
+                    setLockModalMode('unlock');
+                    setLockModalOpen(true);
+                  } else {
+                    setSelectedAlbum(alb);
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                   isCurrent
-                    ? 'bg-indigo-600 text-white shadow-md font-semibold'
+                    ? locked
+                      ? 'bg-amber-500 text-neutral-950 shadow-md font-bold'
+                      : 'bg-indigo-600 text-white shadow-md font-semibold'
+                    : locked
+                    ? 'bg-amber-950/30 text-amber-300 border border-amber-500/30 hover:bg-amber-950/50'
                     : 'bg-neutral-800/80 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'
                 }`}
               >
-                <Folder className="w-3 h-3 text-indigo-400" />
+                {locked ? (
+                  unlockedNow ? (
+                    <Unlock className={`w-3 h-3 ${isCurrent ? 'text-neutral-950' : 'text-amber-400'}`} />
+                  ) : (
+                    <Lock className={`w-3 h-3 ${isCurrent ? 'text-neutral-950' : 'text-amber-400'}`} />
+                  )
+                ) : (
+                  <Folder className="w-3 h-3 text-indigo-400" />
+                )}
                 <span>{alb}</span>
-                <span className="text-[10px] opacity-75">({count})</span>
+                {locked && !unlockedNow ? (
+                  <span className="text-[10px] opacity-80">🔒</span>
+                ) : (
+                  <span className="text-[10px] opacity-75">({count})</span>
+                )}
               </button>
             );
           })}
@@ -295,6 +372,89 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
         </div>
       </div>
 
+      {/* Selected Album Privacy & Lock Management Bar */}
+      {selectedAlbum !== 'all' && selectedAlbum !== 'favorites' && (
+        <div
+          className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 sm:p-4 rounded-2xl border backdrop-blur-md ${
+            isAlbumLocked(selectedAlbum)
+              ? 'bg-amber-950/20 border-amber-500/30'
+              : 'bg-neutral-900/50 border-neutral-800/80'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                isAlbumLocked(selectedAlbum)
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                  : 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/25'
+              }`}
+            >
+              {isAlbumLocked(selectedAlbum) ? <Unlock className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs sm:text-sm font-bold text-white">
+                  {selectedAlbum}
+                </h3>
+                {isAlbumLocked(selectedAlbum) && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold">
+                    Private Vault (আনলকড)
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-neutral-400">
+                {isAlbumLocked(selectedAlbum)
+                  ? 'এই অ্যালবামের ছবিগুলো সাধারণ গ্যালারিতে লুকানো থাকে।'
+                  : 'চাইলে পাসওয়ার্ড দিয়ে এই অ্যালবামটি লক করে গ্যালারি থেকে লুকাতে পারেন।'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-center">
+            {isAlbumLocked(selectedAlbum) ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onRelockAlbumSession(selectedAlbum);
+                    setSelectedAlbum('all');
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 text-xs font-bold shadow-md transition-all cursor-pointer"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>লক করে বের হোন (Lock Now)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetLockAlbum(selectedAlbum);
+                    setLockModalMode('manage-lock');
+                    setLockModalOpen(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 text-xs font-medium transition-all cursor-pointer"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                  <span>লক সেটিংস</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setTargetLockAlbum(selectedAlbum);
+                  setLockModalMode('set-lock');
+                  setLockModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 text-xs font-semibold transition-all cursor-pointer"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>অ্যালবাম লক করুন (Lock Album)</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Batch Action Floating Header when in Selection Mode */}
       {isSelectMode && (
         <div className="sticky top-16 sm:top-20 z-20 flex items-center justify-between bg-indigo-950/95 border border-indigo-500/40 p-3 rounded-2xl shadow-xl backdrop-blur-md">
@@ -364,7 +524,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
                 isSelected={selectedIds.has(img.id)}
                 isCopied={copiedId === img.id}
                 onSelect={(e) => handleToggleSelect(img.id, e)}
-                onClick={() => onOpenLightbox(img, idx)}
+                onClick={() => onOpenLightbox(img, idx, filteredImages)}
                 onCopyLink={(e) => handleCopyLink(e, img)}
                 onToggleFavorite={() => onToggleFavorite(img.id, Boolean(img.isFavorite))}
                 onDelete={() => handleRequestDeleteSingle(img)}
@@ -387,7 +547,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
                 isSelected={selectedIds.has(img.id)}
                 isCopied={copiedId === img.id}
                 onSelect={(e) => handleToggleSelect(img.id, e)}
-                onClick={() => onOpenLightbox(img, idx)}
+                onClick={() => onOpenLightbox(img, idx, filteredImages)}
                 onCopyLink={(e) => handleCopyLink(e, img)}
                 onToggleFavorite={() => onToggleFavorite(img.id, Boolean(img.isFavorite))}
                 onDelete={() => handleRequestDeleteSingle(img)}
@@ -409,7 +569,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
               isSelected={selectedIds.has(img.id)}
               isCopied={copiedId === img.id}
               onSelect={(e) => handleToggleSelect(img.id, e)}
-              onClick={() => onOpenLightbox(img, idx)}
+              onClick={() => onOpenLightbox(img, idx, filteredImages)}
               onCopyLink={(e) => handleCopyLink(e, img)}
               onToggleFavorite={() => onToggleFavorite(img.id, Boolean(img.isFavorite))}
               onDelete={() => handleRequestDeleteSingle(img)}
@@ -440,6 +600,26 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
         imagesToDelete={imagesToDelete}
         onClose={() => setDeleteModalOpen(false)}
         onConfirm={handleConfirmDelete}
+      />
+
+      {/* Album Password Lock / Unlock Modal */}
+      <AlbumLockModal
+        isOpen={lockModalOpen}
+        mode={lockModalMode}
+        albumName={targetLockAlbum}
+        storedHash={lockedAlbums[targetLockAlbum.trim().toLowerCase()]}
+        alreadyVerified={isAlbumUnlockedInSession(targetLockAlbum)}
+        onClose={() => setLockModalOpen(false)}
+        onUnlockSuccess={(alb) => {
+          onUnlockAlbumSession(alb);
+          setSelectedAlbum(alb);
+        }}
+        onSetLock={async (alb, pwd) => {
+          await onLockAlbum(alb, pwd);
+        }}
+        onRemoveLock={async (alb) => {
+          await onUnlockAlbumPermanently(alb);
+        }}
       />
 
     </div>

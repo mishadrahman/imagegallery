@@ -35,8 +35,57 @@ const COLLECTION_NAME = 'gallery_images';
 const ALBUMS_COLLECTION = 'user_albums';
 const LOCAL_STORAGE_KEY = 'cloudpic_cached_images';
 const ALBUMS_STORAGE_KEY = 'cloudpic_cached_albums';
+const LOCKED_ALBUMS_STORAGE_KEY = 'cloudpic_locked_albums';
 
 export const INITIAL_STARTER_IMAGES: GalleryImage[] = [];
+
+// Deterministic hash for album PIN/password
+export function hashAlbumPin(pin: string): string {
+  const clean = pin.trim();
+  let h1 = 0xdeadbeef ^ clean.length;
+  let h2 = 0x41c6ce57 ^ clean.length;
+  for (let i = 0, ch; i < clean.length; i++) {
+    ch = clean.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 'cp_lock_' + (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
+}
+
+export function verifyAlbumPin(inputPin: string, storedHash: string): boolean {
+  if (!storedHash) return false;
+  const cleanInput = inputPin.trim();
+  if (!cleanInput) return false;
+  if (storedHash.startsWith('cp_lock_')) {
+    return hashAlbumPin(cleanInput) === storedHash;
+  }
+  return cleanInput === storedHash;
+}
+
+export function getLockedAlbumsCache(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(LOCKED_ALBUMS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to read locked albums cache', err);
+  }
+  return {};
+}
+
+export function setLockedAlbumsCache(lockedMap: Record<string, string>): void {
+  try {
+    localStorage.setItem(LOCKED_ALBUMS_STORAGE_KEY, JSON.stringify(lockedMap));
+  } catch (err) {
+    console.warn('Failed to save locked albums cache', err);
+  }
+}
 
 // Helper to get local cache
 
@@ -236,32 +285,42 @@ export async function batchDeleteGalleryImages(ids: string[]): Promise<void> {
   }
 }
 
-// Subscribe to real-time album updates
-export function subscribeToAlbums(onData: (albums: string[]) => void): () => void {
+// Subscribe to real-time album updates (including locked status & password hashes)
+export function subscribeToAlbums(
+  onData: (albums: string[], lockedMap: Record<string, string>) => void
+): () => void {
   try {
     const q = query(collection(db, ALBUMS_COLLECTION), orderBy('createdAt', 'desc'));
     return onSnapshot(
       q,
       (snapshot) => {
         const list: string[] = [];
+        const lockedMap: Record<string, string> = {};
         snapshot.forEach((docSnap) => {
-          if (docSnap.data().name) {
-            list.push(docSnap.data().name);
+          const data = docSnap.data();
+          if (data.name) {
+            list.push(data.name);
+            if (data.isLocked && data.passwordHash) {
+              lockedMap[data.name.trim().toLowerCase()] = data.passwordHash;
+            }
           }
         });
         localStorage.setItem(ALBUMS_STORAGE_KEY, JSON.stringify(list));
-        onData(list);
+        setLockedAlbumsCache(lockedMap);
+        onData(list, lockedMap);
       },
       (err) => {
         console.error('Firestore albums onSnapshot error:', err);
         const cached = localStorage.getItem(ALBUMS_STORAGE_KEY);
-        if (cached) onData(JSON.parse(cached));
+        const lockedCached = getLockedAlbumsCache();
+        onData(cached ? JSON.parse(cached) : [], lockedCached);
       }
     );
   } catch (err) {
     console.error('Error establishing Albums subscription:', err);
     const cached = localStorage.getItem(ALBUMS_STORAGE_KEY);
-    if (cached) onData(JSON.parse(cached));
+    const lockedCached = getLockedAlbumsCache();
+    onData(cached ? JSON.parse(cached) : [], lockedCached);
     return () => {};
   }
 }
@@ -292,5 +351,70 @@ export async function saveAlbum(name: string): Promise<void> {
       list.unshift(trimmed);
       localStorage.setItem(ALBUMS_STORAGE_KEY, JSON.stringify(list));
     }
+  }
+}
+
+// Lock an album with a password/PIN
+export async function setAlbumLock(albumName: string, password: string): Promise<string> {
+  const trimmed = albumName.trim();
+  const cleanPin = password.trim();
+  if (!trimmed || !cleanPin) throw new Error('Album name and password are required');
+
+  const passwordHash = hashAlbumPin(cleanPin);
+  const key = trimmed.toLowerCase();
+
+  // Optimistically update local cache immediately
+  const currentLocked = getLockedAlbumsCache();
+  currentLocked[key] = passwordHash;
+  setLockedAlbumsCache(currentLocked);
+
+  try {
+    const safeId = key.replace(/[^a-z0-9]/g, '_');
+    const docRef = doc(db, ALBUMS_COLLECTION, safeId);
+    await setDoc(
+      docRef,
+      {
+        name: trimmed,
+        isLocked: true,
+        passwordHash,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.error('Error setting album lock in Firestore:', err);
+  }
+
+  return passwordHash;
+}
+
+// Remove password lock from an album permanently
+export async function removeAlbumLock(albumName: string): Promise<void> {
+  const trimmed = albumName.trim();
+  if (!trimmed) return;
+
+  const key = trimmed.toLowerCase();
+
+  // Optimistically update local cache immediately
+  const currentLocked = getLockedAlbumsCache();
+  delete currentLocked[key];
+  setLockedAlbumsCache(currentLocked);
+
+  try {
+    const safeId = key.replace(/[^a-z0-9]/g, '_');
+    const docRef = doc(db, ALBUMS_COLLECTION, safeId);
+    await setDoc(
+      docRef,
+      {
+        name: trimmed,
+        isLocked: false,
+        passwordHash: '',
+        updatedAt: Date.now(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.error('Error removing album lock in Firestore:', err);
   }
 }

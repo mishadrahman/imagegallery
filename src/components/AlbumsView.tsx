@@ -1,69 +1,113 @@
 import React, { useState } from 'react';
-import { 
-  Folder, 
-  FolderPlus, 
-  ArrowRight, 
+import {
+  Folder,
+  FolderPlus,
+  ArrowRight,
   Heart,
-  Plus
+  Lock,
+  Unlock,
+  KeyRound,
+  Shield,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { GalleryImage } from '../types';
 import { resolveImageUrl } from '../services/telegramService';
 import { saveAlbum } from '../services/firebase';
+import { AlbumLockModal, AlbumLockModalMode } from './AlbumLockModal';
 
 interface AlbumsViewProps {
   images: GalleryImage[];
   existingAlbums: string[];
+  lockedAlbums: Record<string, string>;
   onSelectAlbum: (album: string) => void;
+  onOpenLockedAlbum: (album: string) => void;
+  onLockAlbum: (albumName: string, password: string) => Promise<void>;
+  onUnlockAlbumPermanently: (albumName: string) => Promise<void>;
   onSwitchToUpload: (albumName?: string) => void;
 }
 
 export const AlbumsView: React.FC<AlbumsViewProps> = ({
   images,
   existingAlbums,
+  lockedAlbums,
   onSelectAlbum,
+  onOpenLockedAlbum,
+  onLockAlbum,
+  onUnlockAlbumPermanently,
   onSwitchToUpload,
 }) => {
   const [newAlbumName, setNewAlbumName] = useState('');
+  const [lockNewAlbum, setLockNewAlbum] = useState(false);
+  const [newAlbumPassword, setNewAlbumPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // Use the pre-computed robust album list from props
+  // Lock Modal state
+  const [lockModalOpen, setLockModalOpen] = useState(false);
+  const [lockModalMode, setLockModalMode] = useState<AlbumLockModalMode>('unlock');
+  const [targetAlbum, setTargetAlbum] = useState<string>('');
+
   const albumNames = existingAlbums;
+
+  // Public favorites exclude any photo belonging to a locked album
+  const publicFavorites = images.filter((i) => {
+    const albKey = (i.album || '').trim().toLowerCase();
+    return i.isFavorite && !(albKey && lockedAlbums[albKey]);
+  });
 
   const handleCreateAlbum = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAlbumName.trim()) return;
+    if (lockNewAlbum && newAlbumPassword.trim().length < 2) return;
+
     const name = newAlbumName.trim();
+    const pwd = newAlbumPassword.trim();
+    const shouldLock = lockNewAlbum && pwd.length >= 2;
+
     setShowAddModal(false);
     setNewAlbumName('');
+    setNewAlbumPassword('');
+    setLockNewAlbum(false);
+
     await saveAlbum(name);
+    if (shouldLock) {
+      await onLockAlbum(name, pwd);
+    }
     onSwitchToUpload(name);
+  };
+
+  const openModalForAlbum = (album: string, mode: AlbumLockModalMode, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setTargetAlbum(album);
+    setLockModalMode(mode);
+    setLockModalOpen(true);
   };
 
   return (
     <div className="space-y-4 sm:space-y-6 max-w-6xl mx-auto pb-24 md:pb-8">
-      
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-neutral-900/60 p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-neutral-800 backdrop-blur-md">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-white font-['Outfit']">
-            Photo Albums & Collections
+          <h2 className="text-xl sm:text-2xl font-bold text-white font-['Outfit'] flex items-center gap-2">
+            <span>Photo Albums & Private Vault</span>
           </h2>
           <p className="text-xs sm:text-sm text-neutral-400 mt-0.5">
-            Organize and browse your personal pictures by categories and memorable moments.
+            যেকোনো অ্যালবামে পাসওয়ার্ড দিয়ে লক করলে তার ছবিগুলো মেইন গ্যালারিতে হাইড থাকবে।
           </p>
         </div>
 
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all self-start sm:self-center"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all self-start sm:self-center cursor-pointer"
         >
           <FolderPlus className="w-4 h-4" />
           <span>Create New Album</span>
         </button>
       </div>
 
-      {/* Favorites Special Album Card */}
-      {images.some((i) => i.isFavorite) && (
+      {/* Favorites Special Album Card (Only public favorites) */}
+      {publicFavorites.length > 0 && (
         <div
           onClick={() => onSelectAlbum('favorites')}
           className="group relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-r from-rose-950/40 via-neutral-900 to-neutral-900 border border-rose-500/30 p-4 sm:p-6 cursor-pointer hover:border-rose-500/60 transition-all shadow-xl"
@@ -78,7 +122,7 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
                   Favorite Memories
                 </h3>
                 <p className="text-xs text-neutral-400">
-                  {images.filter((i) => i.isFavorite).length} starred photo(s)
+                  {publicFavorites.length} starred photo(s)
                 </p>
               </div>
             </div>
@@ -94,8 +138,10 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
       {/* Album Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
         {albumNames.map((album) => {
+          const albKey = album.trim().toLowerCase();
+          const isLocked = Boolean(lockedAlbums[albKey]);
           const albumImages = images.filter(
-            (i) => i.album?.toLowerCase() === album.toLowerCase()
+            (i) => i.album?.trim().toLowerCase() === albKey
           );
           const coverImages = albumImages.slice(0, 3);
           const count = albumImages.length;
@@ -103,16 +149,40 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
           return (
             <div
               key={album}
-              onClick={() => onSelectAlbum(album)}
-              className="group relative rounded-2xl sm:rounded-3xl bg-neutral-900/70 border border-neutral-800 hover:border-neutral-700 overflow-hidden cursor-pointer transition-all duration-300 hover:shadow-2xl flex flex-col justify-between"
+              onClick={() => {
+                if (isLocked) {
+                  openModalForAlbum(album, 'unlock');
+                } else {
+                  onSelectAlbum(album);
+                }
+              }}
+              className={`group relative rounded-2xl sm:rounded-3xl border overflow-hidden cursor-pointer transition-all duration-300 hover:shadow-2xl flex flex-col justify-between ${
+                isLocked
+                  ? 'bg-neutral-900/90 border-amber-500/30 hover:border-amber-500/60 shadow-lg shadow-amber-950/10'
+                  : 'bg-neutral-900/70 border-neutral-800 hover:border-neutral-700'
+              }`}
             >
-              {/* Cover stack */}
+              {/* Cover Area */}
               <div className="h-40 sm:h-48 w-full bg-neutral-950/80 relative overflow-hidden flex items-center justify-center p-2">
-                {coverImages.length > 0 ? (
+                {isLocked ? (
+                  /* LOCKED ALBUM PRIVACY SHIELD - Never renders image URLs */
+                  <div className="w-full h-full rounded-xl sm:rounded-2xl bg-gradient-to-br from-neutral-950 via-neutral-900 to-amber-950/20 border border-neutral-800/80 flex flex-col items-center justify-center p-4 text-center relative overflow-hidden">
+                    <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-2.5 group-hover:scale-110 transition-transform shadow-lg shadow-amber-500/10">
+                      <Lock className="w-6 h-6" />
+                    </div>
+                    <span className="text-xs font-bold text-amber-300 tracking-wide">
+                      পাসওয়ার্ড দ্বারা লক করা
+                    </span>
+                    <span className="text-[10px] text-neutral-400 mt-0.5">
+                      গ্যালারিতে হাইড করা আছে • দেখতে ক্লিক করুন
+                    </span>
+                  </div>
+                ) : coverImages.length > 0 ? (
                   <div className="w-full h-full relative">
                     <img
                       src={resolveImageUrl(coverImages[0], 'thumb')}
                       alt={album}
+                      referrerPolicy="no-referrer"
                       className="w-full h-full object-cover rounded-xl sm:rounded-2xl group-hover:scale-105 transition-transform duration-500"
                       loading="lazy"
                     />
@@ -123,6 +193,7 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
                             key={sub.id}
                             src={resolveImageUrl(sub, 'thumb')}
                             alt=""
+                            referrerPolicy="no-referrer"
                             className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl object-cover border-2 border-neutral-900 shadow-md"
                           />
                         ))}
@@ -136,24 +207,66 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
                   </div>
                 )}
 
-                <div className="absolute top-3 right-3 px-2 py-0.5 rounded-xl bg-neutral-950/80 backdrop-blur-md text-[11px] font-semibold text-neutral-200 border border-neutral-800">
-                  {count} {count === 1 ? 'photo' : 'photos'}
+                {/* Top-Left Lock / Unlock Action Button */}
+                {isLocked ? (
+                  <button
+                    type="button"
+                    onClick={(e) => openModalForAlbum(album, 'unlock', e)}
+                    title="Locked Album - Click to unlock"
+                    className="absolute top-3 left-3 flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 backdrop-blur-md text-[11px] font-bold text-amber-300 border border-amber-500/40 transition-all cursor-pointer"
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>Locked</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => openModalForAlbum(album, 'set-lock', e)}
+                    title="Lock this album with a password"
+                    className="absolute top-3 left-3 flex items-center gap-1 px-2.5 py-1 rounded-xl bg-neutral-950/80 hover:bg-indigo-600 backdrop-blur-md text-[11px] font-semibold text-neutral-300 hover:text-white border border-neutral-800 hover:border-indigo-500 transition-all cursor-pointer"
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>লক করুন</span>
+                  </button>
+                )}
+
+                {/* Top-Right Photo Count Badge */}
+                <div className="absolute top-3 right-3 px-2.5 py-1 rounded-xl bg-neutral-950/80 backdrop-blur-md text-[11px] font-semibold text-neutral-200 border border-neutral-800">
+                  {isLocked ? '🔒 Private' : `${count} ${count === 1 ? 'photo' : 'photos'}`}
                 </div>
               </div>
 
-              {/* Album info */}
+              {/* Album Footer Info */}
               <div className="p-4 sm:p-5 flex items-center justify-between border-t border-neutral-800/80 bg-neutral-900/90">
-                <div>
-                  <h3 className="text-sm sm:text-base font-bold text-white group-hover:text-indigo-400 transition-colors font-['Outfit']">
-                    {album}
-                  </h3>
+                <div className="min-w-0 pr-2">
+                  <div className="flex items-center gap-1.5">
+                    <h3
+                      className={`text-sm sm:text-base font-bold truncate transition-colors font-['Outfit'] ${
+                        isLocked
+                          ? 'text-amber-300 group-hover:text-amber-200'
+                          : 'text-white group-hover:text-indigo-400'
+                      }`}
+                    >
+                      {album}
+                    </h3>
+                  </div>
                   <p className="text-[11px] text-neutral-500 mt-0.5">
-                    {count === 0 ? 'Empty album' : `${count} uploaded`}
+                    {isLocked
+                      ? `পাসওয়ার্ড ছাড়া দেখা যাবে না (${count}টি ছবি)`
+                      : count === 0
+                      ? 'Empty album'
+                      : `${count} uploaded`}
                   </p>
                 </div>
 
-                <div className="w-8 h-8 rounded-xl bg-neutral-800 flex items-center justify-center text-neutral-400 group-hover:bg-indigo-600 group-hover:text-white transition-all">
-                  <ArrowRight className="w-4 h-4" />
+                <div
+                  className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all shrink-0 ${
+                    isLocked
+                      ? 'bg-amber-500/15 text-amber-400 group-hover:bg-amber-500 group-hover:text-neutral-950'
+                      : 'bg-neutral-800 text-neutral-400 group-hover:bg-indigo-600 group-hover:text-white'
+                  }`}
+                >
+                  {isLocked ? <KeyRound className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
                 </div>
               </div>
             </div>
@@ -161,7 +274,7 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
         })}
       </div>
 
-      {/* Create Album Modal */}
+      {/* Create Album Modal (with optional instant Lock) */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="bg-neutral-900 border border-neutral-800 p-5 sm:p-6 rounded-3xl max-w-sm w-full space-y-4 shadow-2xl animate-in zoom-in-95 duration-150">
@@ -176,20 +289,67 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
             </div>
 
             <form onSubmit={handleCreateAlbum} className="space-y-4">
-              <input
-                type="text"
-                placeholder="Album Name (e.g. Summer 2026)"
-                value={newAlbumName}
-                onChange={(e) => setNewAlbumName(e.target.value)}
-                className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
-                autoFocus
-              />
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-medium text-neutral-400 pl-1">
+                  অ্যালবামের নাম (Album Name)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Album Name (e.g. Personal, Summer 2026)"
+                  value={newAlbumName}
+                  onChange={(e) => setNewAlbumName(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+                  autoFocus
+                />
+              </div>
+
+              {/* Optional Password Lock Toggle */}
+              <div className="p-3 rounded-2xl bg-neutral-950/80 border border-neutral-800 space-y-3">
+                <label className="flex items-center justify-between cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <Lock className={`w-4 h-4 ${lockNewAlbum ? 'text-amber-400' : 'text-neutral-500'}`} />
+                    <div>
+                      <span className="text-xs font-semibold text-neutral-200 block">
+                        পাসওয়ার্ড দিয়ে লক রাখুন
+                      </span>
+                      <span className="text-[10px] text-neutral-500 block">
+                        গ্যালারিতে ছবিগুলো সামনে আসবে না
+                      </span>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={lockNewAlbum}
+                    onChange={(e) => setLockNewAlbum(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                  />
+                </label>
+
+                {lockNewAlbum && (
+                  <div className="relative pt-1">
+                    <input
+                      type={showNewPassword ? 'text' : 'password'}
+                      placeholder="পাসওয়ার্ড বা পিন দিন (কমপক্ষে ২ অক্ষর)"
+                      value={newAlbumPassword}
+                      onChange={(e) => setNewAlbumPassword(e.target.value)}
+                      className="w-full bg-neutral-900 border border-amber-500/40 rounded-xl pl-3 pr-9 py-2 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-amber-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
+                    >
+                      {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <div className="flex items-center gap-2">
                 <button
                   type="submit"
-                  disabled={!newAlbumName.trim()}
-                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md shadow-indigo-600/30 transition-all disabled:opacity-50"
+                  disabled={!newAlbumName.trim() || (lockNewAlbum && newAlbumPassword.trim().length < 2)}
+                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md shadow-indigo-600/30 transition-all disabled:opacity-50 cursor-pointer"
                 >
                   Create & Add Photos
                 </button>
@@ -206,6 +366,23 @@ export const AlbumsView: React.FC<AlbumsViewProps> = ({
         </div>
       )}
 
+      {/* Password Unlock / Set Lock Modal */}
+      <AlbumLockModal
+        isOpen={lockModalOpen}
+        mode={lockModalMode}
+        albumName={targetAlbum}
+        storedHash={lockedAlbums[targetAlbum.trim().toLowerCase()]}
+        onClose={() => setLockModalOpen(false)}
+        onUnlockSuccess={(alb) => {
+          onOpenLockedAlbum(alb);
+        }}
+        onSetLock={async (alb, pwd) => {
+          await onLockAlbum(alb, pwd);
+        }}
+        onRemoveLock={async (alb) => {
+          await onUnlockAlbumPermanently(alb);
+        }}
+      />
     </div>
   );
 };
