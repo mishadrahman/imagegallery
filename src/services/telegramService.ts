@@ -1,3 +1,4 @@
+import JSZip from "jszip";
 import { GalleryImage, TelegramStatus } from "../types";
 
 export const TELEGRAM_CONFIG = {
@@ -56,37 +57,51 @@ export function resolveImageUrl(
   return "";
 }
 
-// Reliable single image downloader (fetches Blob via proxy/CDN/CORS-fallback and triggers attachment download)
-export async function downloadGalleryImage(image: GalleryImage): Promise<boolean> {
-  if (!image) return false;
+// Helper to build a clean unique filename for an image
+export function getImageFilename(image: GalleryImage, indexSuffix?: number): string {
+  const safeTitle =
+    (image.title || "photo")
+      .trim()
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
+      .replace(/\s+/g, "_") || "photo";
 
-  const safeTitle = (image.title || "photo")
-    .trim()
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
-    .replace(/\s+/g, "_") || "photo";
+  const ext =
+    image.mimeType === "image/png"
+      ? "png"
+      : image.mimeType === "image/webp"
+      ? "webp"
+      : image.mimeType === "image/gif"
+      ? "gif"
+      : "jpg";
 
-  const ext = image.mimeType === "image/png"
-    ? "png"
-    : image.mimeType === "image/webp"
-    ? "webp"
-    : image.mimeType === "image/gif"
-    ? "gif"
-    : "jpg";
+  const suffix = indexSuffix !== undefined ? `_${indexSuffix + 1}` : `_${image.id.slice(-4)}`;
+  return `${safeTitle}${suffix}.${ext}`;
+}
 
-  const filename = `${safeTitle}_${image.id.slice(-4)}.${ext}`;
+// Triggers a silent, in-page file download from a memory Blob (NEVER opens a new tab or popup)
+export function triggerSilentBlobDownload(blob: Blob, filename: string): void {
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.style.display = "none";
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+}
 
-  const triggerBlobDownload = (blob: Blob) => {
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = blobUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+// Fetches the raw binary Blob of a GalleryImage across any environment (Backend or Static Hosting) without CORS failure
+export async function fetchImageBlob(image: GalleryImage): Promise<Blob | null> {
+  if (!image) return null;
+
+  const isValidImageBlob = (res: Response, blob: Blob): boolean => {
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("text/html") || ct.includes("application/json")) return false;
+    return blob.size > 150;
   };
 
-  // 1. Try local/backend proxy endpoint first (same-origin, zero CORS issues)
+  // Tier 1: Try local/backend same-origin proxy endpoint first
   if (image.fileId) {
     try {
       const proxyUrl = `/api/telegram/image/${image.fileId}${
@@ -94,73 +109,173 @@ export async function downloadGalleryImage(image: GalleryImage): Promise<boolean
       }`;
       const res = await fetch(proxyUrl);
       if (res.ok) {
-        const contentType = res.headers.get("content-type") || "";
-        if (contentType.startsWith("image/") || contentType === "application/octet-stream") {
+        const ct = (res.headers.get("content-type") || "").toLowerCase();
+        if (ct.startsWith("image/") || ct === "application/octet-stream") {
           const blob = await res.blob();
-          if (blob.size > 0) {
-            triggerBlobDownload(blob);
-            return true;
+          if (isValidImageBlob(res, blob)) {
+            return blob;
           }
         }
       }
     } catch {
-      // Proxy unavailable (static hosting), proceed to CDN resolution
+      // Backend proxy not running (static deployment), continue to CDN proxies
     }
   }
 
-  // 2. Resolve direct Telegram CDN URL
-  let cdnUrl = resolveImageUrl(image, "full");
-  if ((!cdnUrl || cdnUrl.startsWith("/api/")) && image.fileId) {
+  // Tier 2: Resolve fresh Telegram CDN URL via CORS-enabled Bot API (getFile)
+  let cdnUrl = "";
+  if (image.fileId) {
     const fresh = await fetchFreshTelegramUrl(image.fileId);
     if (fresh) cdnUrl = fresh;
   }
+  if (!cdnUrl) {
+    const resolved = resolveImageUrl(image, "full");
+    if (resolved && resolved.startsWith("http")) {
+      cdnUrl = resolved;
+    }
+  }
 
   if (cdnUrl && cdnUrl.startsWith("http")) {
-    // 2a. Try direct fetch in case CORS is permitted
-    try {
-      const res = await fetch(cdnUrl);
-      if (res.ok) {
-        const blob = await res.blob();
-        if (blob.size > 0) {
-          triggerBlobDownload(blob);
-          return true;
+    // Tier 2a: Cloudflare global image proxy (wsrv.nl) - supports CORS binary fetch & preserves full resolution
+    const proxyCandidates = [
+      `https://wsrv.nl/?url=${encodeURIComponent(cdnUrl)}`,
+      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(cdnUrl)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(cdnUrl)}`,
+      cdnUrl,
+    ];
+
+    for (const candidateUrl of proxyCandidates) {
+      try {
+        const res = await fetch(candidateUrl);
+        if (res.ok) {
+          const blob = await res.blob();
+          if (isValidImageBlob(res, blob)) {
+            return blob;
+          }
         }
+      } catch {
+        // Try next candidate
       }
-    } catch {
-      // Expected if Telegram CDN blocks cross-origin fetch
     }
 
-    // 2b. Try CORS-friendly raw binary proxy for static deployments
+    // Tier 2b: Offscreen Canvas extraction via CORS-enabled image load
     try {
-      const corsProxyUrl = `https://corsproxy.io/?${encodeURIComponent(cdnUrl)}`;
-      const res = await fetch(corsProxyUrl);
-      if (res.ok) {
-        const blob = await res.blob();
-        if (blob.size > 0) {
-          triggerBlobDownload(blob);
-          return true;
-        }
+      const canvasBlob = await new Promise<Blob | null>((resolve) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = img.naturalWidth || img.width || 800;
+            canvas.height = img.naturalHeight || img.height || 600;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              resolve(null);
+              return;
+            }
+            ctx.drawImage(img, 0, 0);
+            canvas.toBlob(
+              (b) => resolve(b),
+              image.mimeType || "image/jpeg",
+              0.95
+            );
+          } catch {
+            resolve(null);
+          }
+        };
+        img.onerror = () => resolve(null);
+        img.src = `https://wsrv.nl/?url=${encodeURIComponent(cdnUrl)}`;
+      });
+      if (canvasBlob && canvasBlob.size > 150) {
+        return canvasBlob;
       }
     } catch {
-      // Ignore and try fallback
+      // Ignore
     }
   }
 
-  // 3. Final fallback: direct anchor download
-  const finalHref = cdnUrl || image.directUrl;
-  if (finalHref) {
-    const a = document.createElement("a");
-    a.href = finalHref;
-    a.download = filename;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    return true;
+  // Tier 3: Fallback to microThumbnail base64 if everything else is offline
+  if (image.microThumbnail && image.microThumbnail.startsWith("data:image")) {
+    try {
+      const res = await fetch(image.microThumbnail);
+      return await res.blob();
+    } catch {
+      return null;
+    }
   }
 
-  return false;
+  return null;
+}
+
+// Single image silent downloader (NEVER opens a new tab or popup window)
+export async function downloadGalleryImage(image: GalleryImage): Promise<boolean> {
+  if (!image) return false;
+  const blob = await fetchImageBlob(image);
+  if (!blob) return false;
+  const filename = getImageFilename(image);
+  triggerSilentBlobDownload(blob, filename);
+  return true;
+}
+
+// Bulk downloader that packs all selected images into a single ZIP file (1 single download, zero popups, zero browser multi-file blocks)
+export async function downloadBulkImagesAsZip(
+  images: GalleryImage[],
+  onProgress?: (completed: number, total: number, stage: "fetching" | "zipping") => void
+): Promise<boolean> {
+  if (!images || images.length === 0) return false;
+
+  // If only 1 photo is selected, download it directly as an image file
+  if (images.length === 1) {
+    if (onProgress) onProgress(1, 1, "fetching");
+    return await downloadGalleryImage(images[0]);
+  }
+
+  const zip = new JSZip();
+  const total = images.length;
+  let completed = 0;
+  const usedNames = new Set<string>();
+
+  // Fetch up to 3 images concurrently for high speed
+  const CONCURRENCY = 3;
+  let idx = 0;
+
+  const worker = async () => {
+    while (idx < images.length) {
+      const currentIdx = idx++;
+      const img = images[currentIdx];
+      try {
+        const blob = await fetchImageBlob(img);
+        if (blob) {
+          let filename = getImageFilename(img, currentIdx);
+          while (usedNames.has(filename.toLowerCase())) {
+            filename = `${currentIdx + 1}_${filename}`;
+          }
+          usedNames.add(filename.toLowerCase());
+          zip.file(filename, blob);
+        }
+      } catch (err) {
+        console.warn("Failed to include image in ZIP:", img.title, err);
+      } finally {
+        completed++;
+        if (onProgress) onProgress(completed, total, "fetching");
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, images.length) }, () => worker())
+  );
+
+  if (onProgress) onProgress(total, total, "zipping");
+
+  const zipBlob = await zip.generateAsync({
+    type: "blob",
+    compression: "STORE", // JPEGs/PNGs are already compressed; STORE is 10x faster in browser!
+  });
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  triggerSilentBlobDownload(zipBlob, `CloudPic_${images.length}_Photos_${dateStr}.zip`);
+  return true;
 }
 
 // Dynamic client-side self-healer using Telegram's public CORS-enabled Bot API

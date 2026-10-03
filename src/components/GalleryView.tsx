@@ -19,10 +19,16 @@ import {
   KeyRound,
   ShieldCheck,
   Download,
+  Archive,
   Loader2
 } from 'lucide-react';
 import { GalleryImage, ViewMode, SortOption } from '../types';
-import { resolveImageUrl, fetchFreshTelegramUrl, downloadGalleryImage } from '../services/telegramService';
+import {
+  resolveImageUrl,
+  fetchFreshTelegramUrl,
+  downloadGalleryImage,
+  downloadBulkImagesAsZip,
+} from '../services/telegramService';
 import { updateImageDetails } from '../services/firebase';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { AlbumLockModal, AlbumLockModalMode } from './AlbumLockModal';
@@ -73,6 +79,7 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
   const [deleteModalOpen, setDeleteModalOpen] = useState<boolean>(false);
   const [imagesToDelete, setImagesToDelete] = useState<GalleryImage[]>([]);
   const [isBulkDownloading, setIsBulkDownloading] = useState<boolean>(false);
+  const [bulkDownloadMode, setBulkDownloadMode] = useState<'direct' | 'zip' | null>(null);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState<{ current: number; total: number }>({
     current: 0,
     total: 0,
@@ -206,24 +213,32 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
     setDeleteModalOpen(true);
   };
 
-  const handleBulkDownload = async () => {
+  const handleBulkDownload = async (mode: 'direct' | 'zip' = 'direct') => {
     if (selectedIds.size === 0 || isBulkDownloading) return;
     const items = filteredImages.filter((i) => selectedIds.has(i.id));
     if (items.length === 0) return;
 
     setIsBulkDownloading(true);
+    setBulkDownloadMode(mode);
     setBulkDownloadProgress({ current: 0, total: items.length });
 
     try {
-      for (let i = 0; i < items.length; i++) {
-        setBulkDownloadProgress({ current: i + 1, total: items.length });
-        await downloadGalleryImage(items[i]);
-        if (i < items.length - 1) {
-          await new Promise((r) => setTimeout(r, 400));
+      if (mode === 'zip' && items.length > 1) {
+        await downloadBulkImagesAsZip(items, (completed, total) => {
+          setBulkDownloadProgress({ current: completed, total });
+        });
+      } else {
+        for (let i = 0; i < items.length; i++) {
+          setBulkDownloadProgress({ current: i + 1, total: items.length });
+          await downloadGalleryImage(items[i]);
+          if (i < items.length - 1) {
+            await new Promise((r) => setTimeout(r, 450));
+          }
         }
       }
     } finally {
       setIsBulkDownloading(false);
+      setBulkDownloadMode(null);
       setBulkDownloadProgress({ current: 0, total: 0 });
     }
   };
@@ -506,13 +521,15 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Direct In-Page Blob Download (No popups / No new tabs) */}
             <button
               disabled={selectedIds.size === 0 || isBulkDownloading}
-              onClick={handleBulkDownload}
+              onClick={() => handleBulkDownload('direct')}
+              title="Download photos directly to device without opening any new tab"
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md shadow-emerald-600/30 transition-all cursor-pointer"
             >
-              {isBulkDownloading ? (
+              {isBulkDownloading && bulkDownloadMode === 'direct' ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   <span>
@@ -526,6 +543,30 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
                 </>
               )}
             </button>
+
+            {/* Single-File ZIP Bundle Download (Zero browser multi-file blocks) */}
+            {selectedIds.size > 1 && (
+              <button
+                disabled={selectedIds.size === 0 || isBulkDownloading}
+                onClick={() => handleBulkDownload('zip')}
+                title="Download all selected photos together as 1 single ZIP file"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md shadow-indigo-600/30 transition-all cursor-pointer"
+              >
+                {isBulkDownloading && bulkDownloadMode === 'zip' ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>
+                      ZIP ({bulkDownloadProgress.current}/{bulkDownloadProgress.total})...
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Archive className="w-3.5 h-3.5" />
+                    <span>ZIP একসাথে ({selectedIds.size})</span>
+                  </>
+                )}
+              </button>
+            )}
 
             <button
               disabled={selectedIds.size === 0 || isBulkDownloading}
