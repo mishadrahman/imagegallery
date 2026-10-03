@@ -18,14 +18,18 @@ import {
   subscribeToAlbums,
   setAlbumLock,
   removeAlbumLock,
+  verifyEmailAuthorized,
+  ensureAllowedEmailInFirestore,
+  OWNER_ALLOWED_EMAIL,
   auth,
 } from "./services/firebase";
 import { AuthScreen } from "./components/AuthScreen";
-import { onAuthStateChanged, User } from "firebase/auth";
+import { onAuthStateChanged, User, signOut } from "firebase/auth";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [authDeniedError, setAuthDeniedError] = useState<string>("");
   const [activeTab, setActiveTab] = useState<
     "gallery" | "upload" | "albums" | "sync"
   >("gallery");
@@ -49,8 +53,31 @@ export default function App() {
 
   // Subscribe to real-time updates from Firebase Firestore
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+    // Ensure owner Gmail is persisted in Firestore security config
+    ensureAllowedEmailInFirestore().catch(() => {});
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        const cleanEmail = (currentUser.email || "").trim().toLowerCase();
+        const isAuthorized =
+          cleanEmail === OWNER_ALLOWED_EMAIL &&
+          (await verifyEmailAuthorized(cleanEmail));
+
+        if (!isAuthorized) {
+          setAuthDeniedError(
+            "Access Denied! শুধুমাত্র অনুমোদিত জিমেইল দিয়ে লগইন করা যাবে। অন্য কোনো ইমেইল দিয়ে প্রবেশাধিকার নেই।"
+          );
+          setUser(null);
+          setAuthLoading(false);
+          await signOut(auth).catch(() => {});
+          return;
+        }
+
+        setAuthDeniedError("");
+        setUser(currentUser);
+      } else {
+        setUser(null);
+      }
       setAuthLoading(false);
     });
 
@@ -264,7 +291,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <AuthScreen images={publicImages} />;
+    return <AuthScreen images={publicImages} externalError={authDeniedError} />;
   }
 
   return (

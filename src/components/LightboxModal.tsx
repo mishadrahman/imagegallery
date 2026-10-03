@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { GalleryImage } from '../types';
 import { updateImageDetails, saveAlbum } from '../services/firebase';
-import { resolveImageUrl, fetchFreshTelegramUrl } from '../services/telegramService';
+import { resolveImageUrl, fetchFreshTelegramUrl, downloadGalleryImage } from '../services/telegramService';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface LightboxModalProps {
@@ -300,14 +300,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     }
   };
 
-  const handleDownload = () => {
-    const a = document.createElement('a');
-    a.href = resolveImageUrl(currentImage);
-    a.download = `${currentImage.title.replace(/\s+/g, '_') || 'photo'}.jpg`;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  const handleDownload = async () => {
+    await downloadGalleryImage(currentImage);
   };
 
   const formatFileSize = (bytes?: number) => {

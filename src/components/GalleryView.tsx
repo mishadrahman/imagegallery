@@ -17,10 +17,12 @@ import {
   Lock,
   Unlock,
   KeyRound,
-  ShieldCheck
+  ShieldCheck,
+  Download,
+  Loader2
 } from 'lucide-react';
 import { GalleryImage, ViewMode, SortOption } from '../types';
-import { resolveImageUrl, fetchFreshTelegramUrl } from '../services/telegramService';
+import { resolveImageUrl, fetchFreshTelegramUrl, downloadGalleryImage } from '../services/telegramService';
 import { updateImageDetails } from '../services/firebase';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { AlbumLockModal, AlbumLockModalMode } from './AlbumLockModal';
@@ -70,6 +72,11 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
   const [visibleCount, setVisibleCount] = useState<number>(24);
   const [deleteModalOpen, setDeleteModalOpen] = useState<boolean>(false);
   const [imagesToDelete, setImagesToDelete] = useState<GalleryImage[]>([]);
+  const [isBulkDownloading, setIsBulkDownloading] = useState<boolean>(false);
+  const [bulkDownloadProgress, setBulkDownloadProgress] = useState<{ current: number; total: number }>({
+    current: 0,
+    total: 0,
+  });
 
   // Lock modal state inside GalleryView
   const [lockModalOpen, setLockModalOpen] = useState<boolean>(false);
@@ -197,6 +204,28 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
     if (items.length === 0) return;
     setImagesToDelete(items);
     setDeleteModalOpen(true);
+  };
+
+  const handleBulkDownload = async () => {
+    if (selectedIds.size === 0 || isBulkDownloading) return;
+    const items = filteredImages.filter((i) => selectedIds.has(i.id));
+    if (items.length === 0) return;
+
+    setIsBulkDownloading(true);
+    setBulkDownloadProgress({ current: 0, total: items.length });
+
+    try {
+      for (let i = 0; i < items.length; i++) {
+        setBulkDownloadProgress({ current: i + 1, total: items.length });
+        await downloadGalleryImage(items[i]);
+        if (i < items.length - 1) {
+          await new Promise((r) => setTimeout(r, 400));
+        }
+      }
+    } finally {
+      setIsBulkDownloading(false);
+      setBulkDownloadProgress({ current: 0, total: 0 });
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -457,11 +486,11 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
 
       {/* Batch Action Floating Header when in Selection Mode */}
       {isSelectMode && (
-        <div className="sticky top-16 sm:top-20 z-20 flex items-center justify-between bg-indigo-950/95 border border-indigo-500/40 p-3 rounded-2xl shadow-xl backdrop-blur-md">
+        <div className="sticky top-16 sm:top-20 z-20 flex flex-wrap items-center justify-between gap-2 bg-indigo-950/95 border border-indigo-500/40 p-3 rounded-2xl shadow-xl backdrop-blur-md">
           <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={handleSelectAll}
-              className="flex items-center gap-1.5 text-xs font-semibold text-indigo-200 hover:text-white px-2 py-1 rounded-lg bg-indigo-900/60"
+              className="flex items-center gap-1.5 text-xs font-semibold text-indigo-200 hover:text-white px-2.5 py-1.5 rounded-lg bg-indigo-900/60 cursor-pointer"
             >
               {selectedIds.size === filteredImages.length ? (
                 <CheckSquare className="w-4 h-4 text-indigo-400" />
@@ -472,19 +501,41 @@ export const GalleryView: React.FC<GalleryViewProps> = ({
                 {selectedIds.size === filteredImages.length ? 'Deselect All' : 'Select All'}
               </span>
             </button>
-            <span className="text-[11px] sm:text-xs text-indigo-300">
-              {selectedIds.size} of {filteredImages.length}
+            <span className="text-[11px] sm:text-xs text-indigo-300 font-medium">
+              {selectedIds.size} of {filteredImages.length} selected
             </span>
           </div>
 
-          <button
-            disabled={selectedIds.size === 0}
-            onClick={handleRequestBatchDelete}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md shadow-rose-600/30 transition-all cursor-pointer"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Delete Selected ({selectedIds.size})</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              disabled={selectedIds.size === 0 || isBulkDownloading}
+              onClick={handleBulkDownload}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md shadow-emerald-600/30 transition-all cursor-pointer"
+            >
+              {isBulkDownloading ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>
+                    Downloading ({bulkDownloadProgress.current}/{bulkDownloadProgress.total})...
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download ({selectedIds.size})</span>
+                </>
+              )}
+            </button>
+
+            <button
+              disabled={selectedIds.size === 0 || isBulkDownloading}
+              onClick={handleRequestBatchDelete}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md shadow-rose-600/30 transition-all cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete ({selectedIds.size})</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -838,9 +889,19 @@ const ImageCard: React.FC<CardProps> = ({
           
           <div className="flex items-center gap-1">
             <button
+              onClick={(e) => {
+                e.stopPropagation();
+                downloadGalleryImage(image);
+              }}
+              title="Download Photo"
+              className="p-1 rounded hover:text-emerald-400 transition-colors cursor-pointer"
+            >
+              <Download className="w-3 h-3" />
+            </button>
+            <button
               onClick={onCopyLink}
               title="Copy Permanent Link"
-              className="p-1 rounded hover:text-indigo-300 transition-colors"
+              className="p-1 rounded hover:text-indigo-300 transition-colors cursor-pointer"
             >
               {isCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Share2 className="w-3 h-3" />}
             </button>
@@ -850,7 +911,7 @@ const ImageCard: React.FC<CardProps> = ({
                 onDelete();
               }}
               title="Delete Photo"
-              className="p-1 rounded hover:text-rose-400 transition-colors"
+              className="p-1 rounded hover:text-rose-400 transition-colors cursor-pointer"
             >
               <Trash2 className="w-3 h-3" />
             </button>
@@ -997,6 +1058,17 @@ const CompactImageRow: React.FC<CardProps> = ({
           className={`p-1.5 rounded-lg ${image.isFavorite ? 'text-rose-500' : 'text-neutral-500 hover:text-rose-400'}`}
         >
           <Heart className={`w-4 h-4 ${image.isFavorite ? 'fill-rose-500' : ''}`} />
+        </button>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            downloadGalleryImage(image);
+          }}
+          title="Download Photo"
+          className="p-1.5 rounded-lg text-neutral-400 hover:text-emerald-400 cursor-pointer"
+        >
+          <Download className="w-4 h-4" />
         </button>
 
         <button

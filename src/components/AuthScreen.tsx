@@ -1,41 +1,62 @@
 import { GalleryImage } from "../types";
-import { useMemo } from "react";
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   getAuth,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
+  signOut,
 } from "firebase/auth";
-import { app } from "../services/firebase";
-import { motion, AnimatePresence } from "motion/react";
+import {
+  app,
+  verifyEmailAuthorized,
+  ensureAllowedEmailInFirestore,
+} from "../services/firebase";
+import { motion } from "motion/react";
 import {
   Mail,
   Lock,
   Loader2,
   ArrowRight,
   Image as ImageIcon,
+  ShieldAlert,
 } from "lucide-react";
 
 interface AuthScreenProps {
   images: GalleryImage[];
+  externalError?: string;
 }
 
-export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
+export const AuthScreen: React.FC<AuthScreenProps> = ({
+  images,
+  externalError,
+}) => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(externalError || "");
+  const [isAccessDenied, setIsAccessDenied] = useState(Boolean(externalError));
   const [isReset, setIsReset] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+
+  // Sync allowed owner email rule into Firestore on mount
+  useEffect(() => {
+    ensureAllowedEmailInFirestore().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (externalError) {
+      setError(externalError);
+      setIsAccessDenied(true);
+    }
+  }, [externalError]);
 
   const floatingImages = useMemo(() => {
     if (!images || images.length === 0) return [];
     const shuffled = [...images].sort(() => 0.5 - Math.random());
     const selected = shuffled.slice(0, 15);
 
-    // Pre-calculate random values so they don't change on every render (typing)
     return selected.map((img, i) => {
       return {
         img,
@@ -53,17 +74,30 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) {
+    if (!email.trim()) {
+      setIsAccessDenied(false);
       setError("Please enter your email to reset your password.");
       return;
     }
+
     setLoading(true);
     setError("");
+    setIsAccessDenied(false);
     setResetSent(false);
+
+    const allowed = await verifyEmailAuthorized(email);
+    if (!allowed) {
+      setIsAccessDenied(true);
+      setError(
+        "Access Denied! অনুমোদিত অ্যাডমিন জিমেইল ছাড়া অন্য কোনো ইমেইলে পাসওয়ার্ড রিসেট বা প্রবেশ করা যাবে না।"
+      );
+      setLoading(false);
+      return;
+    }
 
     const auth = getAuth(app);
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(auth, email.trim());
       setResetSent(true);
     } catch (err: any) {
       console.error(err);
@@ -79,21 +113,42 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    if (!email.trim() || !password) {
+      setIsAccessDenied(false);
       setError("Please enter both email and password.");
       return;
     }
 
     setLoading(true);
     setError("");
+    setIsAccessDenied(false);
+
+    // 1. Strict Firestore-backed Email Whitelist Verification
+    const allowed = await verifyEmailAuthorized(email);
+    if (!allowed) {
+      setIsAccessDenied(true);
+      setError(
+        "Access Denied! শুধুমাত্র অনুমোদিত জিমেইল দিয়ে লগইন করা যাবে। অন্য কোনো ইমেইল দিয়ে প্রবেশাধিকার নেই।"
+      );
+      setLoading(false);
+      return;
+    }
 
     const auth = getAuth(app);
 
     try {
-      if (isLogin) {
-        await signInWithEmailAndPassword(auth, email, password);
-      } else {
-        await createUserWithEmailAndPassword(auth, email, password);
+      const cleanEmail = email.trim();
+      const cred = isLogin
+        ? await signInWithEmailAndPassword(auth, cleanEmail, password)
+        : await createUserWithEmailAndPassword(auth, cleanEmail, password);
+
+      const postCheck = await verifyEmailAuthorized(cred.user.email);
+      if (!postCheck) {
+        await signOut(auth);
+        setIsAccessDenied(true);
+        setError(
+          "Access Denied! শুধুমাত্র অনুমোদিত জিমেইল দিয়ে লগইন করা যাবে।"
+        );
       }
     } catch (err: any) {
       console.error(err);
@@ -104,7 +159,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
       ) {
         setError("Invalid email or password.");
       } else if (err.code === "auth/email-already-in-use") {
-        setError("An account with this email already exists.");
+        setError("An account with this email already exists. Please Sign In.");
       } else if (err.code === "auth/weak-password") {
         setError("Password should be at least 6 characters.");
       } else {
@@ -189,14 +244,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
                 ? "Reset Password"
                 : isLogin
                   ? "Welcome Back"
-                  : "Create Account"}
+                  : "Owner Registration"}
             </h1>
             <p className="text-neutral-400 text-sm">
               {isReset
-                ? "Enter your email to receive a reset link"
-                : isLogin
-                  ? "Enter your credentials to access your gallery"
-                  : "Sign up to create your personal gallery"}
+                ? "Enter your authorized email to receive a reset link"
+                : "Private Personal Gallery • Restricted Owner Access"}
             </p>
           </div>
 
@@ -208,9 +261,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
-                className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 rounded-xl text-sm text-center"
+                className={`p-3.5 rounded-2xl text-xs sm:text-sm border flex items-start gap-2.5 ${
+                  isAccessDenied
+                    ? "bg-rose-950/60 border-rose-500/60 text-rose-200 shadow-lg shadow-rose-950/40"
+                    : "bg-red-500/10 border-red-500/50 text-red-400 text-center justify-center"
+                }`}
               >
-                {error}
+                {isAccessDenied && (
+                  <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                )}
+                <div className="text-left">
+                  {isAccessDenied && (
+                    <div className="font-bold text-rose-400 uppercase tracking-wider text-[11px] mb-0.5">
+                      ⛔ Access Denied
+                    </div>
+                  )}
+                  <span>{error}</span>
+                </div>
               </motion.div>
             )}
 
@@ -235,7 +302,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (error) {
+                      setError("");
+                      setIsAccessDenied(false);
+                    }
+                  }}
                   className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl pl-10 pr-4 py-3 text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                   placeholder="you@example.com"
                   required
@@ -255,6 +328,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
                       onClick={() => {
                         setIsReset(true);
                         setError("");
+                        setIsAccessDenied(false);
                         setResetSent(false);
                       }}
                       className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
@@ -282,7 +356,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-6"
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-6 cursor-pointer"
             >
               {loading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -310,13 +384,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ images }) => {
                   setIsLogin(!isLogin);
                 }
                 setError("");
+                setIsAccessDenied(false);
               }}
               className="text-sm text-neutral-400 hover:text-indigo-400 transition-colors"
             >
               {isReset
                 ? "Back to Login"
                 : isLogin
-                  ? "Don't have an account? Sign up"
+                  ? "First time owner setup? Create account"
                   : "Already have an account? Sign in"}
             </button>
           </div>

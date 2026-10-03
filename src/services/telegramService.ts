@@ -56,6 +56,113 @@ export function resolveImageUrl(
   return "";
 }
 
+// Reliable single image downloader (fetches Blob via proxy/CDN/CORS-fallback and triggers attachment download)
+export async function downloadGalleryImage(image: GalleryImage): Promise<boolean> {
+  if (!image) return false;
+
+  const safeTitle = (image.title || "photo")
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
+    .replace(/\s+/g, "_") || "photo";
+
+  const ext = image.mimeType === "image/png"
+    ? "png"
+    : image.mimeType === "image/webp"
+    ? "webp"
+    : image.mimeType === "image/gif"
+    ? "gif"
+    : "jpg";
+
+  const filename = `${safeTitle}_${image.id.slice(-4)}.${ext}`;
+
+  const triggerBlobDownload = (blob: Blob) => {
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  };
+
+  // 1. Try local/backend proxy endpoint first (same-origin, zero CORS issues)
+  if (image.fileId) {
+    try {
+      const proxyUrl = `/api/telegram/image/${image.fileId}${
+        image.filePath ? `?path=${encodeURIComponent(image.filePath)}` : ""
+      }`;
+      const res = await fetch(proxyUrl);
+      if (res.ok) {
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.startsWith("image/") || contentType === "application/octet-stream") {
+          const blob = await res.blob();
+          if (blob.size > 0) {
+            triggerBlobDownload(blob);
+            return true;
+          }
+        }
+      }
+    } catch {
+      // Proxy unavailable (static hosting), proceed to CDN resolution
+    }
+  }
+
+  // 2. Resolve direct Telegram CDN URL
+  let cdnUrl = resolveImageUrl(image, "full");
+  if ((!cdnUrl || cdnUrl.startsWith("/api/")) && image.fileId) {
+    const fresh = await fetchFreshTelegramUrl(image.fileId);
+    if (fresh) cdnUrl = fresh;
+  }
+
+  if (cdnUrl && cdnUrl.startsWith("http")) {
+    // 2a. Try direct fetch in case CORS is permitted
+    try {
+      const res = await fetch(cdnUrl);
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob.size > 0) {
+          triggerBlobDownload(blob);
+          return true;
+        }
+      }
+    } catch {
+      // Expected if Telegram CDN blocks cross-origin fetch
+    }
+
+    // 2b. Try CORS-friendly raw binary proxy for static deployments
+    try {
+      const corsProxyUrl = `https://corsproxy.io/?${encodeURIComponent(cdnUrl)}`;
+      const res = await fetch(corsProxyUrl);
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob.size > 0) {
+          triggerBlobDownload(blob);
+          return true;
+        }
+      }
+    } catch {
+      // Ignore and try fallback
+    }
+  }
+
+  // 3. Final fallback: direct anchor download
+  const finalHref = cdnUrl || image.directUrl;
+  if (finalHref) {
+    const a = document.createElement("a");
+    a.href = finalHref;
+    a.download = filename;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return true;
+  }
+
+  return false;
+}
+
 // Dynamic client-side self-healer using Telegram's public CORS-enabled Bot API
 export async function fetchFreshTelegramUrl(
   fileId: string,

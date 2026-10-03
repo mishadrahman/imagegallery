@@ -4,6 +4,7 @@ import {
   getFirestore, 
   collection, 
   doc, 
+  getDoc,
   setDoc, 
   updateDoc, 
   deleteDoc, 
@@ -418,3 +419,68 @@ export async function removeAlbumLock(albumName: string): Promise<void> {
     console.error('Error removing album lock in Firestore:', err);
   }
 }
+
+// Strict Owner Email Access Control (Saved & Verified in Firestore)
+export const OWNER_ALLOWED_EMAIL = 'mdmishadrahman500@gmail.com';
+const ACCESS_CONFIG_COLLECTION = 'app_security_config';
+const ACCESS_CONFIG_DOC_ID = 'allowed_access';
+
+// Persist the allowed Gmail in Firestore so the rule is backed by Firestore
+export async function ensureAllowedEmailInFirestore(): Promise<string[]> {
+  const defaultAllowed = [OWNER_ALLOWED_EMAIL];
+  try {
+    const docRef = doc(db, ACCESS_CONFIG_COLLECTION, ACCESS_CONFIG_DOC_ID);
+    const snap = await getDoc(docRef);
+
+    if (!snap.exists()) {
+      await setDoc(
+        docRef,
+        {
+          ownerEmail: OWNER_ALLOWED_EMAIL,
+          allowedEmails: defaultAllowed,
+          strictAccessOnly: true,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+      return defaultAllowed;
+    }
+
+    const data = snap.data();
+    const existingList: string[] = Array.isArray(data?.allowedEmails)
+      ? data.allowedEmails.map((e: string) => String(e).trim().toLowerCase())
+      : [];
+
+    if (!existingList.includes(OWNER_ALLOWED_EMAIL) || data?.ownerEmail !== OWNER_ALLOWED_EMAIL) {
+      const updatedList = [OWNER_ALLOWED_EMAIL];
+      await setDoc(
+        docRef,
+        {
+          ownerEmail: OWNER_ALLOWED_EMAIL,
+          allowedEmails: updatedList,
+          strictAccessOnly: true,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+      return updatedList;
+    }
+
+    return [OWNER_ALLOWED_EMAIL];
+  } catch (err) {
+    console.warn('Could not sync allowed email config with Firestore, using strict fallback:', err);
+    return defaultAllowed;
+  }
+}
+
+// Verify whether an email is authorized to log in
+export async function verifyEmailAuthorized(email: string | null | undefined): Promise<boolean> {
+  if (!email) return false;
+  const cleanEmail = email.trim().toLowerCase();
+  if (cleanEmail !== OWNER_ALLOWED_EMAIL) {
+    return false;
+  }
+  const allowedList = await ensureAllowedEmailInFirestore();
+  return allowedList.includes(cleanEmail);
+}
+
